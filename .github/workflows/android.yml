@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -35,16 +38,42 @@ jobs:
       - name: Assemble release APK
         run: ./gradlew --no-daemon assembleRelease
 
+      - name: Collect APKs
+        id: collect
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/*.apk "dist/orbit-${{ github.run_number }}-debug.apk"
+          cp app/build/outputs/apk/release/*.apk "dist/orbit-${{ github.run_number }}-release.apk"
+          ls -lh dist
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: orbit-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: dist/*-debug.apk
           if-no-files-found: error
 
       - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
           name: orbit-release-apk
-          path: app/build/outputs/apk/release/*.apk
+          path: dist/*-release.apk
           if-no-files-found: error
+
+      # Artifacts are only reachable to someone signed in to GitHub, so the same
+      # APKs are also published as a release for a plain, shareable download link.
+      - name: Publish APKs as a release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "build-${{ github.run_number }}" dist/*.apk \
+            --target "${{ github.sha }}" \
+            --title "Orbit build ${{ github.run_number }}" \
+            --notes "Automated build of \`${{ github.sha }}\` on \`${{ github.ref_name }}\`.
+
+          The release APK is signed with the **debug keystore** so CI can produce an
+          installable file without secrets. Replace the signing config in
+          \`app/build.gradle.kts\` before distributing this app."
