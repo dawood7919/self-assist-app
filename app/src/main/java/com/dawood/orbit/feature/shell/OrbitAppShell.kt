@@ -134,7 +134,7 @@ fun OrbitAppShell(
                         compact = window.isCompact,
                         onOpenPalette = { paletteOpen = true },
                         onToggleTheme = {
-                            appState.setThemeMode(if (isDark) ThemeMode.Light else ThemeMode.Dark)
+                            appState.updateThemeMode(if (isDark) ThemeMode.Light else ThemeMode.Dark)
                         },
                         onOpenSettings = { navigateTo(OrbitDestination.Settings.route) },
                     )

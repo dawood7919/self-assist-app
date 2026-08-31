@@ -77,17 +77,17 @@ class OrbitAppState(private val prefs: SharedPreferences) {
         prefs.edit().putString(KEY_RECENTS, recentIds.joinToString(",")).apply()
     }
 
-    fun setThemeMode(mode: ThemeMode) {
+    fun updateThemeMode(mode: ThemeMode) {
         themeMode = mode
         prefs.edit().putString(KEY_THEME, mode.name).apply()
     }
 
-    fun setAccent(next: OrbitAccent) {
+    fun updateAccent(next: OrbitAccent) {
         accent = next
         prefs.edit().putString(KEY_ACCENT, next.id).apply()
     }
 
-    fun setCompactDensity(enabled: Boolean) {
+    fun updateCompactDensity(enabled: Boolean) {
         compactDensity = enabled
         prefs.edit().putBoolean(KEY_DENSITY, enabled).apply()
     }

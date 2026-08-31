@@ -90,11 +90,11 @@ fun OrbitNavHost(
         composable(OrbitDestination.Settings.route) {
             SettingsScreen(
                 themeMode = appState.themeMode,
-                onThemeModeChange = appState::setThemeMode,
+                onThemeModeChange = appState::updateThemeMode,
                 accent = appState.accent,
-                onAccentChange = appState::setAccent,
+                onAccentChange = appState::updateAccent,
                 compactDensity = appState.compactDensity,
-                onCompactDensityChange = appState::setCompactDensity,
+                onCompactDensityChange = appState::updateCompactDensity,
                 onOpenDesignSystem = { onNavigate(OrbitRoutes.DESIGN_SYSTEM) },
             )
         }
