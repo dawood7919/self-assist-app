@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Only the pre-Compose window background lives here; every in-app colour
+         comes from the design-system tokens in Kotlin. -->
+    <color name="window_background">#FFF7F7F9</color>
+    <color name="ic_launcher_background">#FF1B1C21</color>
+</resources>
