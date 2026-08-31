@@ -46,7 +46,8 @@ app/src/main/java/com/dawood/orbit/
 │   ├── shell/            ToolShell, ToolHeader, ToolWorkspace, ToolActions…
 │   ├── file/             FileDropZone, FileList, FileItem, FileProgress, FileResult…
 │   ├── component/        ToolCard, ToolRow, ToolTile
-│   └── demo/             Notebook · PDF Merger · Course Roadmap · Video Downloader
+│   ├── videodownloader/  Implemented: resolver, resume engine, service, UI
+│   └── demo/             UI-only: Notebook · PDF Merger · Course Roadmap
 ├── data/                 Sample content (placeholder, isolated from the UI)
 └── app/                  Preferences and cross-screen state
 ```
@@ -60,6 +61,33 @@ app/src/main/java/com/dawood/orbit/
 Nothing else changes. Home, the launcher, search and the command palette all render from the
 registry, so a new tool appears everywhere the moment it is registered. A tool with no
 workspace yet still opens and shows an honest "on the way" state rather than a dead link.
+
+## Implemented tools
+
+### Video Downloader
+
+The first tool with real behaviour behind it.
+
+- **Resume is the design centre.** Transfers use HTTP range requests: the length
+  of the partial file on disk is the offset to resume from, and the file's
+  `ETag` (or `Last-Modified`) is sent as `If-Range`, so a file that changed on
+  the server restarts cleanly instead of being silently stitched together from
+  two different versions. Servers that refuse ranges are detected and the queue
+  says so rather than pretending.
+- **Pausing is coroutine cancellation.** The partial file stays on disk and the
+  next start picks up from its length — including after the app is killed.
+- **Downloads survive leaving the app** via a foreground service with a progress
+  notification, capped at three concurrent transfers.
+- **Link resolving** handles direct media URLs and pages that expose their video
+  openly: Open Graph video tags, `<video>`/`<source>`, JSON-LD `contentUrl`, and
+  media URLs in inline scripts.
+- **Finished files** move into the system Downloads folder via MediaStore on
+  Android 10+; on Android 8–9 they stay in the app's media folder, because
+  writing to Downloads there would need a storage permission.
+
+Not supported: HLS (`.m3u8`) streams, which need segment merging; sites that
+sign every stream per session, which need a dedicated extractor; and anything
+behind DRM, which is not something this app will do.
 
 ## Responsive behaviour
 

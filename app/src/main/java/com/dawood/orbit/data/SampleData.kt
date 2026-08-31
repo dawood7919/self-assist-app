@@ -61,17 +61,6 @@ object SampleData {
 
     enum class CourseStatus { Completed, InProgress, Upcoming }
 
-    @Immutable
-    data class Download(
-        val id: String,
-        val title: String,
-        val source: String,
-        val quality: String,
-        val sizeLabel: String,
-        val durationLabel: String,
-        val progress: Float?,
-        val state: FileState,
-    )
 
     val notes = listOf(
         Note(
@@ -161,38 +150,6 @@ object SampleData {
         OrbitFile("r5", "Inspection notes.docx", "96 KB", FileKind.Document, meta = "Edited last week"),
     )
 
-    val downloads = listOf(
-        Download(
-            id = "d1",
-            title = "Post-tensioned slab construction, start to finish",
-            source = "Structural Academy",
-            quality = "1080p · MP4",
-            sizeLabel = "412 MB",
-            durationLabel = "34:12",
-            progress = 0.62f,
-            state = FileState.Processing,
-        ),
-        Download(
-            id = "d2",
-            title = "Seismic detailing masterclass — part 2",
-            source = "EERI",
-            quality = "720p · MP4",
-            sizeLabel = "188 MB",
-            durationLabel = "51:40",
-            progress = 1f,
-            state = FileState.Completed,
-        ),
-        Download(
-            id = "d3",
-            title = "Site safety briefing (Arabic subtitles)",
-            source = "Meridian Group",
-            quality = "Audio only · M4A",
-            sizeLabel = "18 MB",
-            durationLabel = "12:05",
-            progress = null,
-            state = FileState.Error,
-        ),
-    )
 
     val quickActions = listOf(
         QuickAction("qa1", "New note", "Start writing straight away"),

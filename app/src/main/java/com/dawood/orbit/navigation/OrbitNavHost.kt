@@ -27,7 +27,7 @@ import com.dawood.orbit.feature.tools.ToolsScreen
 import com.dawood.orbit.tools.demo.notebook.NotebookTool
 import com.dawood.orbit.tools.demo.pdfmerge.PdfMergerTool
 import com.dawood.orbit.tools.demo.roadmap.CourseRoadmapTool
-import com.dawood.orbit.tools.demo.videodownloader.VideoDownloaderTool
+import com.dawood.orbit.tools.videodownloader.ui.VideoDownloaderTool
 import com.dawood.orbit.tools.registry.ToolRegistry
 import com.dawood.orbit.tools.shell.ToolShell
 

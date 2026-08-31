@@ -70,5 +70,9 @@ dependencies {
 
     implementation(libs.androidx.navigation.compose)
 
+    // Video downloader: range-request downloads and page parsing.
+    implementation(libs.okhttp)
+    implementation(libs.jsoup)
+
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
