@@ -141,7 +141,7 @@ fun ToolShell(
                             onClick = { menuOpen = true },
                         )
                         OrbitMenu(expanded = menuOpen, onDismiss = { menuOpen = false }) {
-                            menuContent { menuOpen = false }
+                            menuContent.invoke(this) { menuOpen = false }
                         }
                     }
                 }

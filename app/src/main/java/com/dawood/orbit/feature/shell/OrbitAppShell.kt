@@ -86,6 +86,7 @@ fun OrbitAppShell(
 
     var paletteOpen by remember { mutableStateOf(false) }
     val keyboardFocus = remember { FocusRequester() }
+    val isDark = OrbitTheme.colors.isDark
 
     // The palette is the product's main keyboard affordance, so the shell owns
     // the shortcut rather than any individual screen.
@@ -133,9 +134,7 @@ fun OrbitAppShell(
                         compact = window.isCompact,
                         onOpenPalette = { paletteOpen = true },
                         onToggleTheme = {
-                            appState.setThemeMode(
-                                if (OrbitTheme.colors.isDark) ThemeMode.Light else ThemeMode.Dark,
-                            )
+                            appState.setThemeMode(if (isDark) ThemeMode.Light else ThemeMode.Dark)
                         },
                         onOpenSettings = { navigateTo(OrbitDestination.Settings.route) },
                     )
