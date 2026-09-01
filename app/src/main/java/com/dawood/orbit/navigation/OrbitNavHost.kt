@@ -25,13 +25,16 @@ import com.dawood.orbit.feature.settings.SettingsScreen
 import com.dawood.orbit.feature.tools.ToolPlaceholderScreen
 import com.dawood.orbit.feature.tools.ToolsScreen
 import com.dawood.orbit.tools.demo.roadmap.CourseRoadmapTool
+import com.dawood.orbit.tools.audio.AudioExtractTool
 import com.dawood.orbit.tools.bookmarks.BookmarksTool
 import com.dawood.orbit.tools.files.FileManagerTool
 import com.dawood.orbit.tools.calculator.CalculatorTool
 import com.dawood.orbit.tools.converter.UnitConverterTool
 import com.dawood.orbit.tools.engineering.ConcreteCalculatorTool
 import com.dawood.orbit.tools.engineering.RebarCalculatorTool
+import com.dawood.orbit.tools.image.ImageTool
 import com.dawood.orbit.tools.knowledge.KnowledgeBaseTool
+import com.dawood.orbit.tools.media.MediaLibraryTool
 import com.dawood.orbit.tools.notes.NotebookTool
 import com.dawood.orbit.tools.notes.QuickCaptureTool
 import com.dawood.orbit.tools.pdf.PdfCompressTool
@@ -190,6 +193,9 @@ private fun ToolWorkspaceHost(
         ToolRegistry.Ids.PDF_COMPRESS -> PdfCompressTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.WATERMARK -> WatermarkTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.FILE_MANAGER -> FileManagerTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.IMAGE_TOOLS -> ImageTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.AUDIO_EXTRACT -> AudioExtractTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.MEDIA_LIBRARY -> MediaLibraryTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.COURSE_ROADMAP -> CourseRoadmapTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.VIDEO_DOWNLOADER -> VideoDownloaderTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.CALCULATOR -> CalculatorTool(tool = tool, onBack = onBack)

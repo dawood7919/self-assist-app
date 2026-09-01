@@ -43,6 +43,9 @@ object ToolRegistry {
         const val PDF_COMPRESS = "pdf-compress"
         const val WATERMARK = "watermark"
         const val FILE_MANAGER = "file-manager"
+        const val IMAGE_TOOLS = "image-tools"
+        const val AUDIO_EXTRACT = "audio-extract"
+        const val MEDIA_LIBRARY = "media-library"
     }
 
     val categories: List<ToolCategory> = listOf(
@@ -230,20 +233,22 @@ object ToolRegistry {
             hasWorkspace = true,
         ),
         Tool(
-            id = "image-tools",
+            id = Ids.IMAGE_TOOLS,
             name = "Image Tools",
             description = "Crop, resize and convert images",
             icon = OrbitIcons.ImageFile,
             categoryId = Categories.MEDIA,
             tags = listOf("image", "resize", "crop", "convert"),
+            hasWorkspace = true,
         ),
         Tool(
-            id = "audio-extract",
+            id = Ids.AUDIO_EXTRACT,
             name = "Audio Extract",
             description = "Lift the audio track out of a video",
             icon = OrbitIcons.Audio,
             categoryId = Categories.MEDIA,
             tags = listOf("audio", "mp3", "extract"),
+            hasWorkspace = true,
         ),
         Tool(
             id = "screen-record",
@@ -255,12 +260,13 @@ object ToolRegistry {
             status = ToolStatus.Planned,
         ),
         Tool(
-            id = "media-library",
+            id = Ids.MEDIA_LIBRARY,
             name = "Media Library",
             description = "Everything you have saved, in one place",
             icon = OrbitIcons.VideoLibrary,
             categoryId = Categories.MEDIA,
             tags = listOf("library", "media", "gallery"),
+            hasWorkspace = true,
         ),
 
         // ── Engineering ──────────────────────────────────────────────────
