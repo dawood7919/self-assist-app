@@ -30,6 +30,18 @@
             </intent-filter>
         </activity>
 
+        <!-- Produced files are shared through a provider rather than a file://
+             URI, which modern Android refuses to hand to another app. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- Downloads have to survive the app leaving the screen, which on
              modern Android means a foreground service. -->
         <service

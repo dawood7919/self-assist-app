@@ -39,6 +39,10 @@ object ToolRegistry {
         const val QUICK_CAPTURE = "quick-capture"
         const val BOOKMARKS = "bookmarks"
         const val KNOWLEDGE_BASE = "knowledge-base"
+        const val PDF_SPLIT = "pdf-split"
+        const val PDF_COMPRESS = "pdf-compress"
+        const val WATERMARK = "watermark"
+        const val FILE_MANAGER = "file-manager"
     }
 
     val categories: List<ToolCategory> = listOf(
@@ -162,20 +166,22 @@ object ToolRegistry {
             hasWorkspace = true,
         ),
         Tool(
-            id = "pdf-split",
+            id = Ids.PDF_SPLIT,
             name = "PDF Splitter",
             description = "Pull pages or ranges out of a PDF",
             icon = OrbitIcons.Layers,
             categoryId = Categories.DOCUMENTS,
             tags = listOf("pdf", "split", "extract", "pages"),
+            hasWorkspace = true,
         ),
         Tool(
-            id = "pdf-compress",
+            id = Ids.PDF_COMPRESS,
             name = "PDF Compress",
             description = "Shrink a PDF without wrecking the text",
             icon = OrbitIcons.Storage,
             categoryId = Categories.DOCUMENTS,
             tags = listOf("pdf", "compress", "size"),
+            hasWorkspace = true,
         ),
         Tool(
             id = "doc-convert",
@@ -195,21 +201,22 @@ object ToolRegistry {
             status = ToolStatus.Beta,
         ),
         Tool(
-            id = "watermark",
+            id = Ids.WATERMARK,
             name = "Watermark",
             description = "Stamp documents before you share them",
             icon = OrbitIcons.Brush,
             categoryId = Categories.DOCUMENTS,
             tags = listOf("pdf", "stamp", "brand"),
-            status = ToolStatus.Planned,
+            hasWorkspace = true,
         ),
         Tool(
-            id = "file-manager",
+            id = Ids.FILE_MANAGER,
             name = "File Manager",
             description = "Browse everything the app has produced",
             icon = OrbitIcons.Folder,
             categoryId = Categories.DOCUMENTS,
             tags = listOf("files", "browse", "storage"),
+            hasWorkspace = true,
         ),
 
         // ── Media ────────────────────────────────────────────────────────

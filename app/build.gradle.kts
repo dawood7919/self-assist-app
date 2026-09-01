@@ -49,6 +49,9 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            // PDFBox brings its own notices and service files, several of which
+            // collide with the ones already on the packaging path.
+            excludes += "/META-INF/{DEPENDENCIES,LICENSE,LICENSE.txt,NOTICE,NOTICE.txt}"
         }
     }
 }
@@ -73,6 +76,10 @@ dependencies {
     // Video downloader: range-request downloads and page parsing.
     implementation(libs.okhttp)
     implementation(libs.jsoup)
+
+    // PDF merge, split, watermark and image re-encoding. Chosen over rendering
+    // pages to bitmaps because it keeps text selectable in the output.
+    implementation(libs.pdfbox.android)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only the folders the app writes into are exposed, so a share sheet can
+     never reach the rest of the app's private storage. -->
+<paths>
+    <files-path name="output" path="output/" />
+    <cache-path name="work" path="work/" />
+    <external-files-path name="media" path="." />
+</paths>
