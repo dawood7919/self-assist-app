@@ -27,6 +27,11 @@ import com.dawood.orbit.feature.tools.ToolsScreen
 import com.dawood.orbit.tools.demo.notebook.NotebookTool
 import com.dawood.orbit.tools.demo.pdfmerge.PdfMergerTool
 import com.dawood.orbit.tools.demo.roadmap.CourseRoadmapTool
+import com.dawood.orbit.tools.calculator.CalculatorTool
+import com.dawood.orbit.tools.converter.UnitConverterTool
+import com.dawood.orbit.tools.engineering.ConcreteCalculatorTool
+import com.dawood.orbit.tools.engineering.RebarCalculatorTool
+import com.dawood.orbit.tools.password.PasswordGeneratorTool
 import com.dawood.orbit.tools.videodownloader.ui.VideoDownloaderTool
 import com.dawood.orbit.tools.registry.ToolRegistry
 import com.dawood.orbit.tools.shell.ToolShell
@@ -173,6 +178,11 @@ private fun ToolWorkspaceHost(
         ToolRegistry.Ids.PDF_MERGE -> PdfMergerTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.COURSE_ROADMAP -> CourseRoadmapTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.VIDEO_DOWNLOADER -> VideoDownloaderTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.CALCULATOR -> CalculatorTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.UNIT_CONVERTER -> UnitConverterTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.CONCRETE -> ConcreteCalculatorTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.REBAR -> RebarCalculatorTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.PASSWORD -> PasswordGeneratorTool(tool = tool, onBack = onBack)
         else -> ToolShell(tool = tool, onBack = onBack) {
             ToolPlaceholderScreen(tool = tool, onBrowseTools = onBrowseTools)
         }

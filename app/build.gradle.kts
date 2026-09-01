@@ -75,4 +75,8 @@ dependencies {
     implementation(libs.jsoup)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    // The calculators and generators are pure logic, so they are covered by
+    // JVM unit tests that run in CI without a device.
+    testImplementation(libs.junit)
 }

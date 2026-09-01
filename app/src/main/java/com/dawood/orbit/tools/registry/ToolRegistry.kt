@@ -30,6 +30,11 @@ object ToolRegistry {
         const val PDF_MERGE = "pdf-merge"
         const val COURSE_ROADMAP = "course-roadmap"
         const val VIDEO_DOWNLOADER = "video-downloader"
+        const val CALCULATOR = "calculator"
+        const val UNIT_CONVERTER = "unit-converter"
+        const val CONCRETE = "concrete-calculator"
+        const val REBAR = "rebar-calculator"
+        const val PASSWORD = "password-vault"
     }
 
     val categories: List<ToolCategory> = listOf(
@@ -246,20 +251,22 @@ object ToolRegistry {
 
         // ── Engineering ──────────────────────────────────────────────────
         Tool(
-            id = "rebar-calculator",
+            id = Ids.REBAR,
             name = "Rebar Calculator",
             description = "Bar schedules, laps and weights",
             icon = OrbitIcons.Engineering,
             categoryId = Categories.ENGINEERING,
             tags = listOf("rebar", "steel", "structural", "site"),
+            hasWorkspace = true,
         ),
         Tool(
-            id = "concrete-calculator",
+            id = Ids.CONCRETE,
             name = "Concrete Calculator",
             description = "Volumes, mixes and delivery counts",
             icon = OrbitIcons.Calculator,
             categoryId = Categories.ENGINEERING,
             tags = listOf("concrete", "volume", "mix", "site"),
+            hasWorkspace = true,
         ),
         Tool(
             id = "takeoff",
@@ -271,12 +278,13 @@ object ToolRegistry {
             status = ToolStatus.Planned,
         ),
         Tool(
-            id = "unit-converter",
+            id = Ids.UNIT_CONVERTER,
             name = "Unit Converter",
             description = "Length, area, mass, pressure and more",
             icon = OrbitIcons.Converter,
             categoryId = Categories.ENGINEERING,
             tags = listOf("units", "convert", "metric", "imperial"),
+            hasWorkspace = true,
         ),
         Tool(
             id = "load-tables",
@@ -319,12 +327,13 @@ object ToolRegistry {
 
         // ── Utilities ────────────────────────────────────────────────────
         Tool(
-            id = "calculator",
+            id = Ids.CALCULATOR,
             name = "Calculator",
             description = "A calculator that keeps its history",
             icon = OrbitIcons.Calculator,
             categoryId = Categories.UTILITIES,
             tags = listOf("math", "calculator", "history"),
+            hasWorkspace = true,
         ),
         Tool(
             id = "clipboard",
@@ -343,13 +352,13 @@ object ToolRegistry {
             tags = listOf("qr", "barcode", "scan"),
         ),
         Tool(
-            id = "password-vault",
+            id = Ids.PASSWORD,
             name = "Password Generator",
             description = "Strong passwords, kept on device",
             icon = OrbitIcons.Lock,
             categoryId = Categories.UTILITIES,
             tags = listOf("password", "security", "generate"),
-            status = ToolStatus.NeedsSetup,
+            hasWorkspace = true,
         ),
         Tool(
             id = "time-tracker",
