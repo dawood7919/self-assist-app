@@ -42,9 +42,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dawood.orbit.core.util.TimeFormat
 import com.dawood.orbit.data.SampleData
+import com.dawood.orbit.core.files.DocumentStore
 import com.dawood.orbit.tools.notes.NoteQueries
 import com.dawood.orbit.tools.notes.NotesRepository
 import com.dawood.orbit.tools.tasks.TaskQueries
+import com.dawood.orbit.tools.projects.ProjectQueries
+import com.dawood.orbit.tools.projects.ProjectsRepository
 import com.dawood.orbit.tools.tasks.TasksRepository
 import com.dawood.orbit.tools.component.ToolCard
 import com.dawood.orbit.tools.component.ToolTile
@@ -370,14 +373,28 @@ private fun TasksPanel(onOpenProjects: () -> Unit) {
 
 @Composable
 private fun RecentFilesPanel() {
+    val context = LocalContext.current
+    val files = remember { DocumentStore.listOutput(context).take(4) }
+
     Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md)) {
         OrbitSectionHeader("Recent files")
         OrbitCard(contentPadding = androidx.compose.foundation.layout.PaddingValues(OrbitTheme.spacing.sm)) {
-            SampleData.recentFiles.take(4).forEach { file ->
+            if (files.isEmpty()) {
                 OrbitListItem(
-                    title = file.name,
-                    subtitle = "${file.sizeLabel} · ${file.meta.orEmpty()}",
-                    leading = { FilePreview(file, size = 36.dp) },
+                    title = "Nothing produced yet",
+                    subtitle = "Files made by the tools land here",
+                )
+            }
+            files.forEach { file ->
+                val described = DocumentStore.describe(
+                    file = file,
+                    meta = TimeFormat.relative(file.lastModified()),
+                )
+                OrbitListItem(
+                    title = described.name,
+                    subtitle = "${described.sizeLabel} · ${described.meta.orEmpty()}",
+                    leading = { FilePreview(described, size = 36.dp) },
+                    onClick = { DocumentStore.open(context, file) },
                 )
             }
         }
@@ -430,6 +447,12 @@ private fun RecentNotesPanel(onOpenNotes: () -> Unit) {
 
 @Composable
 private fun ProjectsPanel(onOpenProjects: () -> Unit) {
+    val context = LocalContext.current
+    val allProjects by ProjectsRepository.get(context).items.collectAsStateWithLifecycle()
+    val tasks by TasksRepository.get(context).items.collectAsStateWithLifecycle()
+    val now = System.currentTimeMillis()
+    val projects = remember(allProjects) { ProjectQueries.active(allProjects).take(3) }
+
     Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md)) {
         OrbitSectionHeader(
             title = "Projects",
@@ -445,28 +468,33 @@ private fun ProjectsPanel(onOpenProjects: () -> Unit) {
         )
         OrbitCard {
             Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.lg)) {
-                SampleData.projects.take(3).forEach { project ->
+                if (projects.isEmpty()) {
+                    OrbitText(
+                        text = "No projects yet. Group your work into one and its progress shows here.",
+                        style = OrbitTheme.typography.bodySmall,
+                        color = OrbitTheme.colors.textMuted,
+                    )
+                }
+                projects.forEach { project ->
+                    val progress = ProjectQueries.progressOf(tasks, project, now)
                     Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
                         ) {
                             OrbitText(
-                                text = project.name,
+                                text = project.displayName,
                                 style = OrbitTheme.typography.h4,
                                 modifier = Modifier.weight(1f),
                                 maxLines = 1,
                             )
                             OrbitText(
-                                text = "${(project.progress * 100).toInt()}%",
+                                text = "${progress.percent}%",
                                 style = OrbitTheme.typography.labelSmall,
                                 color = OrbitTheme.colors.textMuted,
                             )
                         }
-                        OrbitProgressBar(
-                            progress = project.progress,
-                            color = project.tone.contentColor(),
-                        )
+                        OrbitProgressBar(progress = progress.fraction)
                     }
                 }
             }

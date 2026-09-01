@@ -24,9 +24,9 @@ import com.dawood.orbit.feature.projects.ProjectsScreen
 import com.dawood.orbit.feature.settings.SettingsScreen
 import com.dawood.orbit.feature.tools.ToolPlaceholderScreen
 import com.dawood.orbit.feature.tools.ToolsScreen
-import com.dawood.orbit.tools.demo.roadmap.CourseRoadmapTool
 import com.dawood.orbit.tools.audio.AudioExtractTool
 import com.dawood.orbit.tools.bookmarks.BookmarksTool
+import com.dawood.orbit.tools.clipboard.ClipboardTool
 import com.dawood.orbit.tools.files.FileManagerTool
 import com.dawood.orbit.tools.calculator.CalculatorTool
 import com.dawood.orbit.tools.converter.UnitConverterTool
@@ -41,6 +41,9 @@ import com.dawood.orbit.tools.pdf.PdfCompressTool
 import com.dawood.orbit.tools.pdf.PdfMergeTool
 import com.dawood.orbit.tools.pdf.PdfSplitTool
 import com.dawood.orbit.tools.pdf.WatermarkTool
+import com.dawood.orbit.tools.projects.ProjectManagerTool
+import com.dawood.orbit.tools.roadmap.CourseRoadmapTool
+import com.dawood.orbit.tools.time.TimeTrackerTool
 import com.dawood.orbit.tools.tasks.TasksTool
 import com.dawood.orbit.tools.password.PasswordGeneratorTool
 import com.dawood.orbit.tools.videodownloader.ui.VideoDownloaderTool
@@ -196,6 +199,9 @@ private fun ToolWorkspaceHost(
         ToolRegistry.Ids.IMAGE_TOOLS -> ImageTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.AUDIO_EXTRACT -> AudioExtractTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.MEDIA_LIBRARY -> MediaLibraryTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.PROJECT_MANAGER -> ProjectManagerTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.TIME_TRACKER -> TimeTrackerTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.CLIPBOARD -> ClipboardTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.COURSE_ROADMAP -> CourseRoadmapTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.VIDEO_DOWNLOADER -> VideoDownloaderTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.CALCULATOR -> CalculatorTool(tool = tool, onBack = onBack)

@@ -46,6 +46,9 @@ object ToolRegistry {
         const val IMAGE_TOOLS = "image-tools"
         const val AUDIO_EXTRACT = "audio-extract"
         const val MEDIA_LIBRARY = "media-library"
+        const val PROJECT_MANAGER = "project-manager"
+        const val TIME_TRACKER = "time-tracker"
+        const val CLIPBOARD = "clipboard"
     }
 
     val categories: List<ToolCategory> = listOf(
@@ -132,12 +135,13 @@ object ToolRegistry {
             hasWorkspace = true,
         ),
         Tool(
-            id = "project-manager",
+            id = Ids.PROJECT_MANAGER,
             name = "Project Manager",
-            description = "Group work into projects with milestones",
+            description = "Group work into projects and watch them close out",
             icon = OrbitIcons.Projects,
             categoryId = Categories.PRODUCTIVITY,
-            tags = listOf("projects", "milestones", "gantt"),
+            tags = listOf("projects", "milestones", "planning"),
+            hasWorkspace = true,
         ),
         Tool(
             id = Ids.BOOKMARKS,
@@ -356,12 +360,13 @@ object ToolRegistry {
             hasWorkspace = true,
         ),
         Tool(
-            id = "clipboard",
+            id = Ids.CLIPBOARD,
             name = "Clipboard History",
-            description = "Everything you copied, still there",
+            description = "Keep what you copied and paste it back later",
             icon = OrbitIcons.Copy,
             categoryId = Categories.UTILITIES,
             tags = listOf("clipboard", "history", "paste"),
+            hasWorkspace = true,
         ),
         Tool(
             id = "qr-tools",
@@ -381,12 +386,13 @@ object ToolRegistry {
             hasWorkspace = true,
         ),
         Tool(
-            id = "time-tracker",
+            id = Ids.TIME_TRACKER,
             name = "Time Tracker",
             description = "Where the hours actually went",
             icon = OrbitIcons.Timer,
             categoryId = Categories.UTILITIES,
             tags = listOf("time", "tracking", "hours"),
+            hasWorkspace = true,
         ),
     )
 

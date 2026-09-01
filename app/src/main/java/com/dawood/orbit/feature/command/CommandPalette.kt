@@ -52,7 +52,8 @@ import com.dawood.orbit.core.layout.LocalOrbitWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dawood.orbit.core.util.TimeFormat
-import com.dawood.orbit.data.SampleData
+import com.dawood.orbit.core.files.DocumentStore
+import com.dawood.orbit.core.files.FileFormat
 import com.dawood.orbit.tools.bookmarks.BookmarksRepository
 import com.dawood.orbit.tools.knowledge.KnowledgeEntry
 import com.dawood.orbit.tools.knowledge.KnowledgeSearch
@@ -109,9 +110,12 @@ fun OrbitCommandPalette(
     val stored = remember(notes, tasks, bookmarks) {
         KnowledgeSearch.everything(notes, tasks, bookmarks)
     }
+    val producedFiles = remember(visible) {
+        if (visible) DocumentStore.listOutput(context).take(12) else emptyList()
+    }
 
-    val items = remember(query, stored) {
-        buildCommandItems(query, stored, onNavigate, onQuickAction, onDismiss)
+    val items = remember(query, stored, producedFiles) {
+        buildCommandItems(query, stored, producedFiles, onNavigate, onQuickAction, onDismiss)
     }
     val grouped = remember(items) { items.groupBy { it.group } }
 
@@ -241,6 +245,7 @@ fun OrbitCommandPalette(
 private fun buildCommandItems(
     query: String,
     stored: List<KnowledgeEntry>,
+    producedFiles: List<java.io.File>,
     onNavigate: (String) -> Unit,
     onQuickAction: (String) -> Unit,
     onDismiss: () -> Unit,
@@ -317,16 +322,18 @@ private fun buildCommandItems(
         )
     }
 
-    SampleData.recentFiles.filter { matches(it.name) }.take(4).forEach { file ->
+    // Files the tools actually produced, not a fixture list.
+    producedFiles.filter { matches(it.name) }.take(4).forEach { file ->
+        val kind = FileFormat.kindOf(file.name)
         results += CommandItem(
-            id = file.id,
+            id = file.absolutePath,
             title = file.name,
             group = CommandGroup.Files,
-            icon = file.kind.icon,
-            subtitle = "${file.sizeLabel}${file.meta?.let { " · $it" } ?: ""}",
-            tone = file.kind.tone,
+            icon = kind.icon,
+            subtitle = FileFormat.size(file.length()),
+            tone = kind.tone,
             action = {
-                onNavigate(OrbitDestination.Home.route)
+                onNavigate(OrbitRoutes.tool(ToolRegistry.Ids.FILE_MANAGER))
                 onDismiss()
             },
         )
