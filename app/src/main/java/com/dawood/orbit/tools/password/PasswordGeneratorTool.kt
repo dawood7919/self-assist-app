@@ -186,35 +186,50 @@ fun PasswordGeneratorTool(
                             title = "Lowercase",
                             description = "a to z",
                             trailing = {
-                                OrbitSwitch(options.lowercase) { options = options.copy(lowercase = it) }
+                                OrbitSwitch(
+                                    checked = options.lowercase,
+                                    onCheckedChange = { options = options.copy(lowercase = it) },
+                                )
                             },
                         )
                         OrbitSettingRow(
                             title = "Uppercase",
                             description = "A to Z",
                             trailing = {
-                                OrbitSwitch(options.uppercase) { options = options.copy(uppercase = it) }
+                                OrbitSwitch(
+                                    checked = options.uppercase,
+                                    onCheckedChange = { options = options.copy(uppercase = it) },
+                                )
                             },
                         )
                         OrbitSettingRow(
                             title = "Digits",
                             description = "0 to 9",
                             trailing = {
-                                OrbitSwitch(options.digits) { options = options.copy(digits = it) }
+                                OrbitSwitch(
+                                    checked = options.digits,
+                                    onCheckedChange = { options = options.copy(digits = it) },
+                                )
                             },
                         )
                         OrbitSettingRow(
                             title = "Symbols",
                             description = "! @ # and friends",
                             trailing = {
-                                OrbitSwitch(options.symbols) { options = options.copy(symbols = it) }
+                                OrbitSwitch(
+                                    checked = options.symbols,
+                                    onCheckedChange = { options = options.copy(symbols = it) },
+                                )
                             },
                         )
                         OrbitSettingRow(
                             title = "Avoid look-alike characters",
                             description = "Drops I l 1 O 0 o and quotes",
                             trailing = {
-                                OrbitSwitch(options.avoidAmbiguous) { options = options.copy(avoidAmbiguous = it) }
+                                OrbitSwitch(
+                                    checked = options.avoidAmbiguous,
+                                    onCheckedChange = { options = options.copy(avoidAmbiguous = it) },
+                                )
                             },
                         )
                     }
