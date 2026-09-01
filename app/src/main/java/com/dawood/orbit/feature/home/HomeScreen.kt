@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,7 +38,14 @@ import com.dawood.orbit.core.layout.OrbitContentContainer
 import com.dawood.orbit.core.layout.OrbitGrid
 import com.dawood.orbit.core.layout.contentPadding
 import com.dawood.orbit.core.layout.sectionSpacing
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.dawood.orbit.core.util.TimeFormat
 import com.dawood.orbit.data.SampleData
+import com.dawood.orbit.tools.notes.NoteQueries
+import com.dawood.orbit.tools.notes.NotesRepository
+import com.dawood.orbit.tools.tasks.TaskQueries
+import com.dawood.orbit.tools.tasks.TasksRepository
 import com.dawood.orbit.tools.component.ToolCard
 import com.dawood.orbit.tools.component.ToolTile
 import com.dawood.orbit.tools.file.FilePreview
@@ -313,6 +321,12 @@ private fun ContinueCard(entry: ContinueEntry, onClick: () -> Unit) {
 
 @Composable
 private fun TasksPanel(onOpenProjects: () -> Unit) {
+    val context = LocalContext.current
+    val repository = remember(context) { TasksRepository.get(context) }
+    val tasks by repository.items.collectAsStateWithLifecycle()
+    val now = System.currentTimeMillis()
+    val upcoming = remember(tasks) { TaskQueries.ordered(tasks.filter { !it.done }).take(4) }
+
     Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md)) {
         OrbitSectionHeader(
             title = "Today",
@@ -327,11 +341,27 @@ private fun TasksPanel(onOpenProjects: () -> Unit) {
             },
         )
         OrbitCard(contentPadding = androidx.compose.foundation.layout.PaddingValues(OrbitTheme.spacing.sm)) {
-            SampleData.tasks.take(4).forEach { task ->
+            if (upcoming.isEmpty()) {
+                OrbitListItem(
+                    title = "Nothing due",
+                    subtitle = "Add a task and it shows up here",
+                    onClick = onOpenProjects,
+                )
+            }
+            upcoming.forEach { task ->
                 OrbitListItem(
                     title = task.title,
-                    subtitle = "${task.project} · ${task.dueLabel}",
-                    leading = { OrbitCheckbox(checked = task.done, onCheckedChange = null) },
+                    subtitle = listOfNotNull(
+                        task.project.ifBlank { null },
+                        task.dueAt?.let { TimeFormat.upcoming(it, now) }
+                            ?: TaskQueries.bucketOf(task, now).label,
+                    ).joinToString(" · "),
+                    leading = {
+                        OrbitCheckbox(
+                            checked = task.done,
+                            onCheckedChange = { repository.toggleDone(task.id) },
+                        )
+                    },
                 )
             }
         }
@@ -356,6 +386,10 @@ private fun RecentFilesPanel() {
 
 @Composable
 private fun RecentNotesPanel(onOpenNotes: () -> Unit) {
+    val context = LocalContext.current
+    val allNotes by NotesRepository.get(context).items.collectAsStateWithLifecycle()
+    val notes = remember(allNotes) { NoteQueries.ordered(allNotes).take(3) }
+
     Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md)) {
         OrbitSectionHeader(
             title = "Recent notes",
@@ -370,10 +404,17 @@ private fun RecentNotesPanel(onOpenNotes: () -> Unit) {
             },
         )
         OrbitCard(contentPadding = androidx.compose.foundation.layout.PaddingValues(OrbitTheme.spacing.sm)) {
-            SampleData.notes.take(3).forEach { note ->
+            if (notes.isEmpty()) {
                 OrbitListItem(
-                    title = note.title,
-                    subtitle = "${note.notebook} · ${note.updatedLabel}",
+                    title = "No notes yet",
+                    subtitle = "Write one and it appears here",
+                    onClick = onOpenNotes,
+                )
+            }
+            notes.forEach { note ->
+                OrbitListItem(
+                    title = note.displayTitle,
+                    subtitle = "${note.notebook} · ${TimeFormat.relative(note.updatedAt)}",
                     leading = {
                         OrbitIconTile(
                             icon = OrbitIcons.Notes,

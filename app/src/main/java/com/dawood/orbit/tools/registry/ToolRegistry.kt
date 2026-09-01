@@ -35,6 +35,10 @@ object ToolRegistry {
         const val CONCRETE = "concrete-calculator"
         const val REBAR = "rebar-calculator"
         const val PASSWORD = "password-vault"
+        const val TASKS = "tasks"
+        const val QUICK_CAPTURE = "quick-capture"
+        const val BOOKMARKS = "bookmarks"
+        const val KNOWLEDGE_BASE = "knowledge-base"
     }
 
     val categories: List<ToolCategory> = listOf(
@@ -103,20 +107,22 @@ object ToolRegistry {
             hasWorkspace = true,
         ),
         Tool(
-            id = "tasks",
+            id = Ids.TASKS,
             name = "Tasks",
             description = "A single list for everything you owe",
             icon = OrbitIcons.Checklist,
             categoryId = Categories.PRODUCTIVITY,
             tags = listOf("todo", "checklist", "planning"),
+            hasWorkspace = true,
         ),
         Tool(
-            id = "quick-capture",
+            id = Ids.QUICK_CAPTURE,
             name = "Quick Capture",
             description = "Drop an idea somewhere safe in two taps",
             icon = OrbitIcons.Add,
             categoryId = Categories.PRODUCTIVITY,
             tags = listOf("inbox", "note", "idea"),
+            hasWorkspace = true,
         ),
         Tool(
             id = "project-manager",
@@ -127,21 +133,22 @@ object ToolRegistry {
             tags = listOf("projects", "milestones", "gantt"),
         ),
         Tool(
-            id = "bookmarks",
+            id = Ids.BOOKMARKS,
             name = "Bookmarks",
             description = "Save links with tags and notes",
             icon = OrbitIcons.BookmarkOutline,
             categoryId = Categories.PRODUCTIVITY,
             tags = listOf("links", "read later"),
+            hasWorkspace = true,
         ),
         Tool(
-            id = "knowledge-base",
+            id = Ids.KNOWLEDGE_BASE,
             name = "Knowledge Base",
-            description = "Your personal, searchable wiki",
+            description = "Search every note, task and link at once",
             icon = OrbitIcons.Course,
             categoryId = Categories.PRODUCTIVITY,
             tags = listOf("wiki", "reference", "search"),
-            status = ToolStatus.Planned,
+            hasWorkspace = true,
         ),
 
         // ── Documents ────────────────────────────────────────────────────

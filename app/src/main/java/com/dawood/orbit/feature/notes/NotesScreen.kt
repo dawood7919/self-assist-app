@@ -39,7 +39,12 @@ import com.dawood.orbit.core.layout.OrbitContentContainer
 import com.dawood.orbit.core.layout.OrbitGrid
 import com.dawood.orbit.core.layout.contentPadding
 import com.dawood.orbit.core.layout.sectionSpacing
-import com.dawood.orbit.data.SampleData
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.dawood.orbit.core.util.TimeFormat
+import com.dawood.orbit.tools.notes.Note
+import com.dawood.orbit.tools.notes.NoteQueries
+import com.dawood.orbit.tools.notes.NotesRepository
 
 /**
  * The notes index. Opening a note hands off to the Notebook tool, which is the
@@ -51,14 +56,15 @@ fun NotesScreen(
     modifier: Modifier = Modifier,
 ) {
     val window = LocalOrbitWindow.current
+    val context = LocalContext.current
+    val all by NotesRepository.get(context).items.collectAsStateWithLifecycle()
     var query by rememberSaveable { mutableStateOf("") }
-    var notebook by rememberSaveable { mutableStateOf(SampleData.notebooks.first()) }
+    var notebook by rememberSaveable { mutableStateOf(ALL_NOTEBOOKS) }
 
-    val notes = remember(query, notebook) {
-        SampleData.notes.filter { note ->
-            (notebook == SampleData.notebooks.first() || note.notebook == notebook) &&
-                (query.isBlank() || note.title.contains(query, true) || note.excerpt.contains(query, true))
-        }
+    val notebooks = remember(all) { listOf(ALL_NOTEBOOKS) + NoteQueries.notebooks(all) }
+    val notes = remember(all, query, notebook) {
+        val scope = if (notebook == ALL_NOTEBOOKS) all else NoteQueries.inNotebook(all, notebook)
+        NoteQueries.search(scope, query)
     }
     val pinned = notes.filter { it.pinned }
     val others = notes.filterNot { it.pinned }
@@ -75,7 +81,7 @@ fun NotesScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.lg)) {
                     OrbitSectionHeader(
                         title = "Notes",
-                        subtitle = "${SampleData.notes.size} notes in ${SampleData.notebooks.size - 1} notebooks",
+                        subtitle = noteCountLabel(all.size, notebooks.size - 1),
                         action = {
                             OrbitButton(
                                 text = "New note",
@@ -96,7 +102,7 @@ fun NotesScreen(
                             .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
                     ) {
-                        SampleData.notebooks.forEach { name ->
+                        notebooks.forEach { name ->
                             OrbitChip(
                                 text = name,
                                 selected = notebook == name,
@@ -112,8 +118,12 @@ fun NotesScreen(
             item("empty") {
                 OrbitContentContainer {
                     OrbitEmptyState(
-                        title = "No notes here yet",
-                        description = "Nothing in this notebook matches what you searched for.",
+                        title = if (all.isEmpty()) "No notes yet" else "No notes here",
+                        description = if (all.isEmpty()) {
+                            "Start a note in the Notebook. It is saved on this device as you type."
+                        } else {
+                            "Nothing in this notebook matches what you searched for."
+                        },
                         icon = OrbitIcons.Notes,
                         primaryActionLabel = "Write a note",
                         onPrimaryAction = onOpenNotebook,
@@ -151,15 +161,15 @@ fun NotesScreen(
 }
 
 @Composable
-private fun NoteCard(note: SampleData.Note, onClick: () -> Unit) {
-    OrbitCard(onClick = onClick, contentDescription = note.title) {
+private fun NoteCard(note: Note, onClick: () -> Unit) {
+    OrbitCard(onClick = onClick, contentDescription = note.displayTitle) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
         ) {
             OrbitText(
-                text = note.title,
+                text = note.displayTitle,
                 style = OrbitTheme.typography.h3,
                 modifier = Modifier.weight(1f),
                 maxLines = 1,
@@ -175,7 +185,7 @@ private fun NoteCard(note: SampleData.Note, onClick: () -> Unit) {
         }
         Box(Modifier.fillMaxWidth().padding(top = OrbitTheme.spacing.sm)) {
             OrbitText(
-                text = note.excerpt,
+                text = note.excerpt.ifBlank { "Empty note" },
                 style = OrbitTheme.typography.bodySmall,
                 color = OrbitTheme.colors.textSecondary,
                 maxLines = 3,
@@ -191,7 +201,7 @@ private fun NoteCard(note: SampleData.Note, onClick: () -> Unit) {
         ) {
             OrbitBadge(note.notebook, tone = OrbitTone.Neutral)
             OrbitText(
-                text = note.updatedLabel,
+                text = TimeFormat.relative(note.updatedAt),
                 style = OrbitTheme.typography.caption,
                 color = OrbitTheme.colors.textMuted,
                 modifier = Modifier.weight(1f),
@@ -203,4 +213,13 @@ private fun NoteCard(note: SampleData.Note, onClick: () -> Unit) {
             )
         }
     }
+}
+
+private const val ALL_NOTEBOOKS = "All notes"
+
+/** "12 notes in 3 notebooks", pluralised, so the header never reads oddly. */
+private fun noteCountLabel(notes: Int, notebooks: Int): String {
+    val noteWord = if (notes == 1) "note" else "notes"
+    val bookWord = if (notebooks == 1) "notebook" else "notebooks"
+    return if (notes == 0) "Nothing written yet" else "$notes $noteWord in $notebooks $bookWord"
 }

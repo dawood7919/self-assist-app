@@ -24,13 +24,17 @@ import com.dawood.orbit.feature.projects.ProjectsScreen
 import com.dawood.orbit.feature.settings.SettingsScreen
 import com.dawood.orbit.feature.tools.ToolPlaceholderScreen
 import com.dawood.orbit.feature.tools.ToolsScreen
-import com.dawood.orbit.tools.demo.notebook.NotebookTool
 import com.dawood.orbit.tools.demo.pdfmerge.PdfMergerTool
 import com.dawood.orbit.tools.demo.roadmap.CourseRoadmapTool
+import com.dawood.orbit.tools.bookmarks.BookmarksTool
 import com.dawood.orbit.tools.calculator.CalculatorTool
 import com.dawood.orbit.tools.converter.UnitConverterTool
 import com.dawood.orbit.tools.engineering.ConcreteCalculatorTool
 import com.dawood.orbit.tools.engineering.RebarCalculatorTool
+import com.dawood.orbit.tools.knowledge.KnowledgeBaseTool
+import com.dawood.orbit.tools.notes.NotebookTool
+import com.dawood.orbit.tools.notes.QuickCaptureTool
+import com.dawood.orbit.tools.tasks.TasksTool
 import com.dawood.orbit.tools.password.PasswordGeneratorTool
 import com.dawood.orbit.tools.videodownloader.ui.VideoDownloaderTool
 import com.dawood.orbit.tools.registry.ToolRegistry
@@ -146,6 +150,7 @@ fun OrbitNavHost(
                 toolId = toolId,
                 onBack = { navController.popBackStack() },
                 onBrowseTools = { onNavigate(OrbitDestination.Tools.route) },
+                onOpenTool = { onNavigate(OrbitRoutes.tool(it)) },
             )
         }
     }
@@ -163,6 +168,7 @@ private fun ToolWorkspaceHost(
     toolId: String,
     onBack: () -> Unit,
     onBrowseTools: () -> Unit,
+    onOpenTool: (String) -> Unit,
 ) {
     val tool = ToolRegistry.tool(toolId)
     if (tool == null) {
@@ -183,6 +189,11 @@ private fun ToolWorkspaceHost(
         ToolRegistry.Ids.CONCRETE -> ConcreteCalculatorTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.REBAR -> RebarCalculatorTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.PASSWORD -> PasswordGeneratorTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.TASKS -> TasksTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.QUICK_CAPTURE -> QuickCaptureTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.BOOKMARKS -> BookmarksTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.KNOWLEDGE_BASE ->
+            KnowledgeBaseTool(tool = tool, onBack = onBack, onOpenTool = onOpenTool)
         else -> ToolShell(tool = tool, onBack = onBack) {
             ToolPlaceholderScreen(tool = tool, onBrowseTools = onBrowseTools)
         }
@@ -192,7 +203,7 @@ private fun ToolWorkspaceHost(
 private fun quickActionRoute(actionId: String): String = when (actionId) {
     "qa1" -> OrbitRoutes.tool(ToolRegistry.Ids.NOTEBOOK)
     "qa2" -> OrbitRoutes.tool(ToolRegistry.Ids.PDF_MERGE)
-    "qa3" -> OrbitRoutes.tool("tasks")
+    "qa3" -> OrbitRoutes.tool(ToolRegistry.Ids.TASKS)
     "qa4" -> OrbitRoutes.tool(ToolRegistry.Ids.VIDEO_DOWNLOADER)
     else -> OrbitDestination.Tools.route
 }

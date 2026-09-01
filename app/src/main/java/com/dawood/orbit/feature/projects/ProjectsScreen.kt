@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -38,7 +39,14 @@ import com.dawood.orbit.core.layout.OrbitContentContainer
 import com.dawood.orbit.core.layout.OrbitGrid
 import com.dawood.orbit.core.layout.contentPadding
 import com.dawood.orbit.core.layout.sectionSpacing
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.dawood.orbit.core.util.TimeFormat
 import com.dawood.orbit.data.SampleData
+import com.dawood.orbit.tools.registry.ToolRegistry
+import com.dawood.orbit.tools.tasks.TaskBucket
+import com.dawood.orbit.tools.tasks.TaskQueries
+import com.dawood.orbit.tools.tasks.TasksRepository
 
 /**
  * Projects group work that spans several tools. The screen is intentionally
@@ -51,6 +59,11 @@ fun ProjectsScreen(
     modifier: Modifier = Modifier,
 ) {
     val window = LocalOrbitWindow.current
+    val context = LocalContext.current
+    val tasksRepository = remember(context) { TasksRepository.get(context) }
+    val tasks by tasksRepository.items.collectAsStateWithLifecycle()
+    val now = System.currentTimeMillis()
+    val openTasks = remember(tasks) { TaskQueries.ordered(tasks.filter { !it.done }) }
     var filterIndex by rememberSaveable { mutableStateOf(0) }
     val filters = listOf("Active", "All", "Done")
 
@@ -106,7 +119,7 @@ fun ProjectsScreen(
                         action = {
                             OrbitButton(
                                 text = "Open Tasks",
-                                onClick = { onOpenTool("tasks") },
+                                onClick = { onOpenTool(ToolRegistry.Ids.TASKS) },
                                 variant = OrbitButtonVariant.Ghost,
                                 size = OrbitButtonSize.Small,
                                 trailingIcon = OrbitIcons.ChevronRight,
@@ -118,14 +131,32 @@ fun ProjectsScreen(
                             OrbitTheme.spacing.sm,
                         ),
                     ) {
-                        SampleData.tasks.forEach { task ->
+                        if (openTasks.isEmpty()) {
+                            OrbitListItem(
+                                title = "No open tasks",
+                                subtitle = "Add one in the Tasks tool",
+                                onClick = { onOpenTool(ToolRegistry.Ids.TASKS) },
+                            )
+                        }
+                        openTasks.forEach { task ->
+                            val bucket = TaskQueries.bucketOf(task, now)
                             OrbitListItem(
                                 title = task.title,
-                                subtitle = "${task.project} · ${task.dueLabel}",
-                                leading = { OrbitCheckbox(checked = task.done, onCheckedChange = null) },
+                                subtitle = listOfNotNull(
+                                    task.project.ifBlank { null },
+                                    task.dueAt?.let { TimeFormat.upcoming(it, now) } ?: bucket.label,
+                                ).joinToString(" · "),
+                                leading = {
+                                    OrbitCheckbox(
+                                        checked = task.done,
+                                        onCheckedChange = { tasksRepository.toggleDone(task.id) },
+                                    )
+                                },
                                 trailing = {
-                                    if (!task.done && task.dueLabel == "Today") {
-                                        OrbitBadge("Today", tone = OrbitTone.Warning)
+                                    when (bucket) {
+                                        TaskBucket.Overdue -> OrbitBadge("Overdue", tone = OrbitTone.Error)
+                                        TaskBucket.Today -> OrbitBadge("Today", tone = OrbitTone.Warning)
+                                        else -> Unit
                                     }
                                 },
                             )

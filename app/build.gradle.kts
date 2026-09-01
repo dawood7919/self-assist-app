@@ -79,4 +79,7 @@ dependencies {
     // The calculators and generators are pure logic, so they are covered by
     // JVM unit tests that run in CI without a device.
     testImplementation(libs.junit)
+    // The Android JVM test runtime stubs org.json, so the codecs need the real
+    // implementation on the unit-test classpath.
+    testImplementation(libs.json)
 }
