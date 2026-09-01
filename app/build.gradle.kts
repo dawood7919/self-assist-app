@@ -81,6 +81,10 @@ dependencies {
     // pages to bitmaps because it keeps text selectable in the output.
     implementation(libs.pdfbox.android)
 
+    // QR and barcode encoding, and decoding a code out of a photo. The core
+    // library is pure Java, so reading a code needs no camera permission.
+    implementation(libs.zxing.core)
+
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     // The calculators and generators are pure logic, so they are covered by

@@ -27,6 +27,8 @@ import com.dawood.orbit.feature.tools.ToolsScreen
 import com.dawood.orbit.tools.audio.AudioExtractTool
 import com.dawood.orbit.tools.bookmarks.BookmarksTool
 import com.dawood.orbit.tools.clipboard.ClipboardTool
+import com.dawood.orbit.tools.codes.BarcodeTool
+import com.dawood.orbit.tools.convert.ConverterTool
 import com.dawood.orbit.tools.files.FileManagerTool
 import com.dawood.orbit.tools.calculator.CalculatorTool
 import com.dawood.orbit.tools.converter.UnitConverterTool
@@ -206,6 +208,8 @@ private fun ToolWorkspaceHost(
         ToolRegistry.Ids.CLIPBOARD -> ClipboardTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.LOAD_TABLES -> LoadTablesTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.TAKEOFF -> TakeoffTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.QR_TOOLS -> BarcodeTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.DOC_CONVERT -> ConverterTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.COURSE_ROADMAP -> CourseRoadmapTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.VIDEO_DOWNLOADER -> VideoDownloaderTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.CALCULATOR -> CalculatorTool(tool = tool, onBack = onBack)

@@ -51,6 +51,8 @@ object ToolRegistry {
         const val CLIPBOARD = "clipboard"
         const val LOAD_TABLES = "load-tables"
         const val TAKEOFF = "takeoff"
+        const val QR_TOOLS = "qr-tools"
+        const val DOC_CONVERT = "doc-convert"
     }
 
     val categories: List<ToolCategory> = listOf(
@@ -193,12 +195,13 @@ object ToolRegistry {
             hasWorkspace = true,
         ),
         Tool(
-            id = "doc-convert",
+            id = Ids.DOC_CONVERT,
             name = "Document Converter",
-            description = "Move between DOCX, PDF, TXT and Markdown",
+            description = "PDF to text, and text or Markdown to PDF",
             icon = OrbitIcons.Swap,
             categoryId = Categories.DOCUMENTS,
-            tags = listOf("convert", "docx", "markdown"),
+            tags = listOf("convert", "text", "markdown", "extract"),
+            hasWorkspace = true,
         ),
         Tool(
             id = "ocr",
@@ -371,12 +374,13 @@ object ToolRegistry {
             hasWorkspace = true,
         ),
         Tool(
-            id = "qr-tools",
+            id = Ids.QR_TOOLS,
             name = "QR & Barcodes",
-            description = "Generate and read codes",
+            description = "Write a code, or read one out of a picture",
             icon = OrbitIcons.Camera,
             categoryId = Categories.UTILITIES,
-            tags = listOf("qr", "barcode", "scan"),
+            tags = listOf("qr", "barcode", "scan", "ean"),
+            hasWorkspace = true,
         ),
         Tool(
             id = Ids.PASSWORD,
