@@ -43,6 +43,8 @@ import com.dawood.orbit.tools.pdf.PdfSplitTool
 import com.dawood.orbit.tools.pdf.WatermarkTool
 import com.dawood.orbit.tools.projects.ProjectManagerTool
 import com.dawood.orbit.tools.roadmap.CourseRoadmapTool
+import com.dawood.orbit.tools.sections.LoadTablesTool
+import com.dawood.orbit.tools.takeoff.TakeoffTool
 import com.dawood.orbit.tools.time.TimeTrackerTool
 import com.dawood.orbit.tools.tasks.TasksTool
 import com.dawood.orbit.tools.password.PasswordGeneratorTool
@@ -202,6 +204,8 @@ private fun ToolWorkspaceHost(
         ToolRegistry.Ids.PROJECT_MANAGER -> ProjectManagerTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.TIME_TRACKER -> TimeTrackerTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.CLIPBOARD -> ClipboardTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.LOAD_TABLES -> LoadTablesTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.TAKEOFF -> TakeoffTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.COURSE_ROADMAP -> CourseRoadmapTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.VIDEO_DOWNLOADER -> VideoDownloaderTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.CALCULATOR -> CalculatorTool(tool = tool, onBack = onBack)

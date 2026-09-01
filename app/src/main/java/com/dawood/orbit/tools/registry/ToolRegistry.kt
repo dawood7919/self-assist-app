@@ -49,6 +49,8 @@ object ToolRegistry {
         const val PROJECT_MANAGER = "project-manager"
         const val TIME_TRACKER = "time-tracker"
         const val CLIPBOARD = "clipboard"
+        const val LOAD_TABLES = "load-tables"
+        const val TAKEOFF = "takeoff"
     }
 
     val categories: List<ToolCategory> = listOf(
@@ -293,13 +295,13 @@ object ToolRegistry {
             hasWorkspace = true,
         ),
         Tool(
-            id = "takeoff",
+            id = Ids.TAKEOFF,
             name = "Quantity Take-off",
-            description = "Measure quantities straight off a drawing",
+            description = "A measured sheet that totals each unit separately",
             icon = OrbitIcons.Sheet,
             categoryId = Categories.ENGINEERING,
-            tags = listOf("takeoff", "quantity", "estimate"),
-            status = ToolStatus.Planned,
+            tags = listOf("takeoff", "quantity", "estimate", "measure"),
+            hasWorkspace = true,
         ),
         Tool(
             id = Ids.UNIT_CONVERTER,
@@ -311,13 +313,13 @@ object ToolRegistry {
             hasWorkspace = true,
         ),
         Tool(
-            id = "load-tables",
+            id = Ids.LOAD_TABLES,
             name = "Load Tables",
             description = "Section properties and capacities offline",
             icon = OrbitIcons.Science,
             categoryId = Categories.ENGINEERING,
-            tags = listOf("steel", "sections", "tables"),
-            status = ToolStatus.Planned,
+            tags = listOf("steel", "sections", "tables", "ipe", "hea", "heb"),
+            hasWorkspace = true,
         ),
 
         // ── AI ───────────────────────────────────────────────────────────
