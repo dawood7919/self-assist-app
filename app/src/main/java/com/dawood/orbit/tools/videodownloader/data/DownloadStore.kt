@@ -67,6 +67,7 @@ internal class DownloadStore(context: Context) {
         put("createdAt", createdAt)
         put("completedAt", completedAt ?: JSONObject.NULL)
         put("savedLocation", savedLocation ?: JSONObject.NULL)
+        put("thumbnailUrl", thumbnailUrl ?: JSONObject.NULL)
         // Per-segment progress is what lets a parallel download resume without
         // re-fetching bytes that are already on disk.
         put(
@@ -104,6 +105,7 @@ internal class DownloadStore(context: Context) {
         createdAt = optLong("createdAt", System.currentTimeMillis()),
         completedAt = if (isNull("completedAt")) null else optLong("completedAt"),
         savedLocation = optStringOrNull("savedLocation"),
+        thumbnailUrl = optStringOrNull("thumbnailUrl"),
         segments = optJSONArray("segments")?.let { array ->
             (0 until array.length()).mapNotNull { index ->
                 runCatching {

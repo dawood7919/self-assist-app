@@ -69,6 +69,12 @@ data class OrbitSizes(
     val contentMaxWidth: Dp = 1180.dp,
     val readingMaxWidth: Dp = 720.dp,
 
+    /** Comfortable width for a tool workspace that is wider than prose. */
+    val workspaceMaxWidth: Dp = 900.dp,
+
+    /** Poster square used by list rows that represent a video or a file. */
+    val thumbnail: Dp = 56.dp,
+
     /**
      * How tall an inline preview of a picked image or generated code may grow.
      * Capped so the thing being previewed never pushes its own controls off

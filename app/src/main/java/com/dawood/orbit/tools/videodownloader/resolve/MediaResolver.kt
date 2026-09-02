@@ -21,6 +21,8 @@ data class ResolvedMedia(
     val mimeType: String,
     val sizeBytes: Long,
     val resumable: Boolean,
+    /** Poster image for the video, when the page offered one. */
+    val thumbnailUrl: String? = null,
 )
 
 sealed interface ResolveResult {
@@ -92,6 +94,7 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
             document.title(),
         ).firstOrNull { !it.isNullOrBlank() }?.trim()
 
+        val poster = posterFrom(document)
         val candidates = collectCandidates(document, html)
         if (candidates.isEmpty()) {
             return ResolveResult.Failure(
@@ -123,7 +126,10 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
             .mapIndexed { index, item ->
                 // Only the first gets the page title; the rest would all end up
                 // with the same name and overwrite each other in the queue.
-                item.toMedia(titleHint = if (index == 0) pageTitle else null)
+                item.toMedia(
+                    titleHint = if (index == 0) pageTitle else null,
+                    thumbnailUrl = poster,
+                )
             }
             .sortedByDescending { it.sizeBytes }
 
@@ -265,7 +271,7 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
         }
     }
 
-    private fun Probe.toMedia(titleHint: String?): ResolvedMedia {
+    private fun Probe.toMedia(titleHint: String?, thumbnailUrl: String? = null): ResolvedMedia {
         val name = fileNameHint
             ?: fileNameFromUrl(finalUrl)
             ?: defaultName(contentType)
@@ -277,8 +283,23 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
             mimeType = contentType ?: "video/mp4",
             sizeBytes = contentLength,
             resumable = acceptsRanges,
+            thumbnailUrl = thumbnailUrl,
         )
     }
+
+    /**
+     * The page's poster image.
+     *
+     * Open Graph first because it is what the page itself advertises as
+     * representative; a `<video poster>` is the fallback and is usually the
+     * exact frame the player would show.
+     */
+    private fun posterFrom(document: org.jsoup.nodes.Document): String? = sequenceOf(
+        document.selectFirst("meta[property=og:image:secure_url]")?.absUrl("content"),
+        document.selectFirst("meta[property=og:image]")?.absUrl("content"),
+        document.selectFirst("meta[name=twitter:image]")?.absUrl("content"),
+        document.selectFirst("video[poster]")?.absUrl("poster"),
+    ).firstOrNull { !it.isNullOrBlank() && it.startsWith("http") }
 
     // ── Small helpers ───────────────────────────────────────────────────────
 

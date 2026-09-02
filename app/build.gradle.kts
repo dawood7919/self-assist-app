@@ -113,6 +113,11 @@ dependencies {
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
 
+    // Poster images for the queue, and a decoded frame for finished files that
+    // never had a poster to begin with.
+    implementation(libs.coil.compose)
+    implementation(libs.coil.video)
+
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     // The calculators and generators are pure logic, so they are covered by

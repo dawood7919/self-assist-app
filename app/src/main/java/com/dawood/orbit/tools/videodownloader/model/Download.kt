@@ -42,6 +42,8 @@ data class DownloadItem(
     val completedAt: Long? = null,
     /** Where the finished file ended up, once exported out of the app's cache. */
     val savedLocation: String? = null,
+    /** Poster image from the source page, when there was one. */
+    val thumbnailUrl: String? = null,
     val speedBytesPerSecond: Long = 0L,
 ) {
     /** True while the file is being pulled over several connections at once. */

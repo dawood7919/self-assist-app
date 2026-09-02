@@ -21,7 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dawood.orbit.core.designsystem.component.OrbitBadge
@@ -177,7 +176,7 @@ fun VideoDownloaderTool(
                 .verticalScroll(rememberScrollState())
                 .padding(OrbitTheme.spacing.lg),
         ) {
-            OrbitContentContainer(maxWidth = 900.dp) {
+            OrbitContentContainer(maxWidth = OrbitTheme.sizes.workspaceMaxWidth) {
                 Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.lg)) {
 
                     ToolWorkspace(label = "Source") {
@@ -308,10 +307,11 @@ private fun ResolvedCard(
             horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            OrbitIconTile(
-                icon = OrbitIcons.Video,
-                size = 44.dp,
-                iconSize = OrbitTheme.sizes.iconLg,
+            VideoThumbnail(
+                thumbnailUrl = media.thumbnailUrl,
+                localPath = null,
+                size = OrbitTheme.sizes.thumbnail,
+                contentDescription = null,
             )
             Column(
                 modifier = Modifier.weight(1f),
@@ -446,11 +446,22 @@ private fun DownloadRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md),
         ) {
-            OrbitIconTile(
-                icon = if (item.mimeType.startsWith("audio")) OrbitIcons.Audio else OrbitIcons.Video,
-                size = 42.dp,
-                iconSize = OrbitTheme.sizes.iconLg,
-            )
+            if (item.mimeType.startsWith("audio")) {
+                OrbitIconTile(
+                    icon = OrbitIcons.Audio,
+                    size = OrbitTheme.sizes.thumbnail,
+                    iconSize = OrbitTheme.sizes.iconLg,
+                )
+            } else {
+                VideoThumbnail(
+                    // A finished file can have a frame pulled out of it even
+                    // when the page never offered a poster.
+                    thumbnailUrl = item.thumbnailUrl,
+                    localPath = item.partPath.takeIf { item.status == DownloadStatus.Completed },
+                    size = OrbitTheme.sizes.thumbnail,
+                    contentDescription = null,
+                )
+            }
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xxs),

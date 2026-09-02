@@ -46,6 +46,9 @@ import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.FormatListBulleted
+import androidx.compose.material.icons.outlined.Forward30
+import androidx.compose.material.icons.outlined.Fullscreen
+import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.material.icons.outlined.Functions
 import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.History
@@ -78,6 +81,7 @@ import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Print
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Replay30
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Science
@@ -231,4 +235,8 @@ object OrbitIcons {
     val Text: ImageVector = Icons.Outlined.TextFields
     val VideoLibrary: ImageVector = Icons.Outlined.VideoLibrary
     val Record: ImageVector = Icons.Outlined.Videocam
+    val Fullscreen: ImageVector = Icons.Outlined.Fullscreen
+    val FullscreenExit: ImageVector = Icons.Outlined.FullscreenExit
+    val Forward30: ImageVector = Icons.Outlined.Forward30
+    val Replay30: ImageVector = Icons.Outlined.Replay30
 }

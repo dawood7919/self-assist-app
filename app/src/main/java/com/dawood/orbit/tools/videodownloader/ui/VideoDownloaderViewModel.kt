@@ -98,6 +98,7 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
                 partPath = File(directory, "$id.part").absolutePath,
                 totalBytes = media.sizeBytes,
                 resumable = media.resumable,
+                thumbnailUrl = media.thumbnailUrl,
             ),
         )
         DownloadController.start(context, id)
