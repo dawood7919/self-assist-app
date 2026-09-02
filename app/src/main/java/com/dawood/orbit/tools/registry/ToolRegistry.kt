@@ -53,6 +53,8 @@ object ToolRegistry {
         const val TAKEOFF = "takeoff"
         const val QR_TOOLS = "qr-tools"
         const val DOC_CONVERT = "doc-convert"
+        const val AI_ASSISTANT = "ai-assistant"
+        const val DOC_ANALYSIS = "doc-analysis"
     }
 
     val categories: List<ToolCategory> = listOf(
@@ -327,22 +329,24 @@ object ToolRegistry {
 
         // ── AI ───────────────────────────────────────────────────────────
         Tool(
-            id = "ai-assistant",
+            id = Ids.AI_ASSISTANT,
             name = "AI Assistant",
-            description = "Ask anything, right inside your workspace",
+            description = "Ask anything, using your own API key",
             icon = OrbitIcons.Ai,
             categoryId = Categories.AI,
             tags = listOf("ai", "chat", "assistant"),
-            status = ToolStatus.Beta,
+            status = ToolStatus.NeedsSetup,
+            hasWorkspace = true,
         ),
         Tool(
-            id = "doc-analysis",
+            id = Ids.DOC_ANALYSIS,
             name = "Document Analysis",
-            description = "Summarise and question a long document",
+            description = "Summarise and question a long PDF",
             icon = OrbitIcons.Notes,
             categoryId = Categories.AI,
-            tags = listOf("ai", "summary", "documents"),
-            status = ToolStatus.Beta,
+            tags = listOf("ai", "summary", "documents", "pdf"),
+            status = ToolStatus.NeedsSetup,
+            hasWorkspace = true,
         ),
         Tool(
             id = "transcribe",

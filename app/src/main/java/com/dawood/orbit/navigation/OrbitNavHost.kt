@@ -24,6 +24,8 @@ import com.dawood.orbit.feature.projects.ProjectsScreen
 import com.dawood.orbit.feature.settings.SettingsScreen
 import com.dawood.orbit.feature.tools.ToolPlaceholderScreen
 import com.dawood.orbit.feature.tools.ToolsScreen
+import com.dawood.orbit.tools.ai.AiAssistantTool
+import com.dawood.orbit.tools.ai.DocumentAnalysisTool
 import com.dawood.orbit.tools.audio.AudioExtractTool
 import com.dawood.orbit.tools.bookmarks.BookmarksTool
 import com.dawood.orbit.tools.clipboard.ClipboardTool
@@ -210,6 +212,8 @@ private fun ToolWorkspaceHost(
         ToolRegistry.Ids.TAKEOFF -> TakeoffTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.QR_TOOLS -> BarcodeTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.DOC_CONVERT -> ConverterTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.AI_ASSISTANT -> AiAssistantTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.DOC_ANALYSIS -> DocumentAnalysisTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.COURSE_ROADMAP -> CourseRoadmapTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.VIDEO_DOWNLOADER -> VideoDownloaderTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.CALCULATOR -> CalculatorTool(tool = tool, onBack = onBack)
