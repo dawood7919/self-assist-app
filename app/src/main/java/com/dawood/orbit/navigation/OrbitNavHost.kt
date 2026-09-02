@@ -41,6 +41,7 @@ import com.dawood.orbit.tools.knowledge.KnowledgeBaseTool
 import com.dawood.orbit.tools.media.MediaLibraryTool
 import com.dawood.orbit.tools.notes.NotebookTool
 import com.dawood.orbit.tools.notes.QuickCaptureTool
+import com.dawood.orbit.tools.ocr.ScanToTextTool
 import com.dawood.orbit.tools.pdf.PdfCompressTool
 import com.dawood.orbit.tools.pdf.PdfMergeTool
 import com.dawood.orbit.tools.pdf.PdfSplitTool
@@ -214,6 +215,7 @@ private fun ToolWorkspaceHost(
         ToolRegistry.Ids.DOC_CONVERT -> ConverterTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.AI_ASSISTANT -> AiAssistantTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.DOC_ANALYSIS -> DocumentAnalysisTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.OCR -> ScanToTextTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.COURSE_ROADMAP -> CourseRoadmapTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.VIDEO_DOWNLOADER -> VideoDownloaderTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.CALCULATOR -> CalculatorTool(tool = tool, onBack = onBack)

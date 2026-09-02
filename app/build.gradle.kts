@@ -85,6 +85,11 @@ dependencies {
     // library is pure Java, so reading a code needs no camera permission.
     implementation(libs.zxing.core)
 
+    // Offline text recognition. The bundled model is chosen over the Play
+    // Services one so the tool works on a device without Google services,
+    // at the cost of a larger APK.
+    implementation(libs.mlkit.text.recognition)
+
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     // The calculators and generators are pure logic, so they are covered by

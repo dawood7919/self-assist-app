@@ -32,7 +32,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.unit.dp
 import com.dawood.orbit.core.designsystem.component.OrbitBadge
 import com.dawood.orbit.core.designsystem.component.OrbitButton
 import com.dawood.orbit.core.designsystem.component.OrbitButtonVariant
@@ -264,7 +263,7 @@ fun BarcodeTool(
                                         bitmap = bitmap.asImageBitmap(),
                                         contentDescription = "The generated ${kind.label} code",
                                         modifier = Modifier
-                                            .widthIn(max = 320.dp)
+                                            .widthIn(max = OrbitTheme.sizes.previewMaxHeight)
                                             .clip(OrbitTheme.radius.shapeMd)
                                             .background(OrbitTheme.colors.surface)
                                             .padding(OrbitTheme.spacing.md),

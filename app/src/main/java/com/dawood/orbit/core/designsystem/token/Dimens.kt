@@ -68,4 +68,11 @@ data class OrbitSizes(
     /** Reading measure for long-form content on very wide displays. */
     val contentMaxWidth: Dp = 1180.dp,
     val readingMaxWidth: Dp = 720.dp,
+
+    /**
+     * How tall an inline preview of a picked image or generated code may grow.
+     * Capped so the thing being previewed never pushes its own controls off
+     * the screen.
+     */
+    val previewMaxHeight: Dp = 320.dp,
 )

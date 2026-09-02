@@ -55,6 +55,7 @@ object ToolRegistry {
         const val DOC_CONVERT = "doc-convert"
         const val AI_ASSISTANT = "ai-assistant"
         const val DOC_ANALYSIS = "doc-analysis"
+        const val OCR = "ocr"
     }
 
     val categories: List<ToolCategory> = listOf(
@@ -206,13 +207,13 @@ object ToolRegistry {
             hasWorkspace = true,
         ),
         Tool(
-            id = "ocr",
+            id = Ids.OCR,
             name = "Scan to Text",
-            description = "Read text out of scans and photos",
+            description = "Read text out of photos and screenshots, offline",
             icon = OrbitIcons.Text,
             categoryId = Categories.DOCUMENTS,
-            tags = listOf("ocr", "scan", "text"),
-            status = ToolStatus.Beta,
+            tags = listOf("ocr", "scan", "text", "photo"),
+            hasWorkspace = true,
         ),
         Tool(
             id = Ids.WATERMARK,
@@ -264,7 +265,7 @@ object ToolRegistry {
         Tool(
             id = "screen-record",
             name = "Screen Recorder",
-            description = "Capture the screen with one tap",
+            description = "Capture the screen — not built yet",
             icon = OrbitIcons.Record,
             categoryId = Categories.MEDIA,
             tags = listOf("record", "screen", "capture"),
@@ -351,7 +352,7 @@ object ToolRegistry {
         Tool(
             id = "transcribe",
             name = "Transcribe",
-            description = "Turn a recording into searchable text",
+            description = "Recording to text — needs a speech service",
             icon = OrbitIcons.Mic,
             categoryId = Categories.AI,
             tags = listOf("ai", "audio", "transcript"),
