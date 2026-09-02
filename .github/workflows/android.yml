@@ -88,7 +88,13 @@ jobs:
             --target "${{ github.sha }}" \
             --title "Orbit build ${{ github.run_number }}" \
             --notes "Automated build of \`${{ github.sha }}\` on \`${{ github.ref_name }}\`.
+          Version code \`${{ github.run_number }}\`.
 
-          The release APK is signed with the **debug keystore** so CI can produce an
-          installable file without secrets. Replace the signing config in
-          \`app/build.gradle.kts\` before distributing this app."
+          Install **orbit-${{ github.run_number }}-release.apk** — it is the smaller,
+          optimised build. It installs over any earlier Orbit build without an
+          uninstall, so your notes, tasks and downloads survive the upgrade.
+
+          Both APKs are signed with the keystore committed at \`app/orbit-ci.jks\`,
+          which is what keeps the signature stable across builds. That key is public,
+          so replace it with one you keep private before distributing this app to
+          anyone else."
