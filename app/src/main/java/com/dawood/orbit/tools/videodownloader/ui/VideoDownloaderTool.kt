@@ -276,8 +276,9 @@ fun VideoDownloaderTool(
                         text = "Large files are pulled over several connections at once, which is " +
                             "what actually uses the available bandwidth — a single stream to a " +
                             "distant server is usually capped long before your connection is. " +
-                            "Sites that sign every stream per session, and anything behind DRM, " +
-                            "are not supported. Only download what you have the right to keep.",
+                            "Sites that sign their streams per session go through the bundled " +
+                            "extractor; anything behind DRM does not, and never will. Only " +
+                            "download what you have the right to keep.",
                     )
                 }
             }

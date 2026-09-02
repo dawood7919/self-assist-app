@@ -1,5 +1,6 @@
 package com.dawood.orbit.tools.videodownloader.resolve
 
+import com.dawood.orbit.tools.videodownloader.extractor.StreamExtractor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -58,6 +59,30 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
         val url = normalise(rawUrl)
             ?: return@withContext ResolveResult.Failure("That does not look like a valid link.")
 
+        // A site whose streams are signed per session has to go through the
+        // extractor: the page simply does not contain a media URL to find, so
+        // parsing it would fail no matter how hard we looked.
+        if (StreamExtractor.handles(url)) {
+            when (val outcome = StreamExtractor.extract(url)) {
+                is StreamExtractor.Outcome.Found ->
+                    return@withContext ResolveResult.Success(outcome.candidates)
+
+                is StreamExtractor.Outcome.NotSupported ->
+                    return@withContext ResolveResult.Failure(outcome.reason)
+
+                is StreamExtractor.Outcome.Failed -> {
+                    // Extractors break when a site changes; falling through to
+                    // plain page parsing is worth a try before giving up.
+                    val fallback = runCatching { resolveFromPage(url) }.getOrNull()
+                    if (fallback is ResolveResult.Success) return@withContext fallback
+                    return@withContext ResolveResult.Failure(
+                        "${outcome.message} This usually means the site changed and the " +
+                            "extractor needs updating.",
+                    )
+                }
+            }
+        }
+
         val direct = runCatching { probe(url, referer = null) }.getOrElse { error ->
             return@withContext ResolveResult.Failure(networkMessage(error))
         }
@@ -98,9 +123,8 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
         val candidates = collectCandidates(document, html)
         if (candidates.isEmpty()) {
             return ResolveResult.Failure(
-                "No downloadable media was found on that page. Sites that sign their " +
-                    "video URLs per session (YouTube and similar) need a dedicated " +
-                    "extractor, which this build does not include yet.",
+                "No downloadable media was found on that page, and no bundled extractor " +
+                    "recognises the site.",
             )
         }
 

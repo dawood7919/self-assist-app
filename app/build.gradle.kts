@@ -54,6 +54,10 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // NewPipeExtractor uses java.time and the stream API, neither of which
+        // exists on Android 8. Desugaring backports them rather than raising
+        // minSdk and dropping those devices.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -117,6 +121,11 @@ dependencies {
     // never had a poster to begin with.
     implementation(libs.coil.compose)
     implementation(libs.coil.video)
+
+    // Extracts real stream URLs from sites that sign them per session.
+    // GPL-3.0, which is why the whole application is GPL-3.0 — see LICENSE.
+    implementation(libs.newpipe.extractor)
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 

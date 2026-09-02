@@ -13,6 +13,8 @@ zxing = "3.5.3"
 mlkitText = "16.0.1"
 media3 = "1.4.1"
 coil = "2.7.0"
+newpipe = "v0.24.6"
+desugar = "2.1.2"
 junit = "4.13.2"
 json = "20240303"
 
@@ -43,6 +45,8 @@ androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplaye
 androidx-media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
 coil-video = { group = "io.coil-kt", name = "coil-video", version.ref = "coil" }
+newpipe-extractor = { group = "com.github.TeamNewPipe.NewPipeExtractor", name = "extractor", version.ref = "newpipe" }
+desugar-jdk-libs = { group = "com.android.tools", name = "desugar_jdk_libs", version.ref = "desugar" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 json = { group = "org.json", name = "json", version.ref = "json" }
 
