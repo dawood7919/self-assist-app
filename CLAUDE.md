@@ -16,6 +16,21 @@ Do **not** design a new screen. Assemble it:
    empty / loading / error / success states.
 5. Only write genuinely tool-specific composables — the shape of the workspace, nothing else.
 
+## Separate the engine from the screen
+
+Every tool that computes, parses or converts keeps that logic in a plain object with no
+Android or Compose types: `CalculatorEngine`, `PageRanges`, `ImageMath`, `TaskQueries`,
+`SectionCalculations`, `TextLayout`. The composable collects input and shows results;
+it never does arithmetic.
+
+This is not tidiness. It is the only way anything gets verified — see below — and it has
+already caught shipped-quality bugs: a rebar weight formula that disagreed with the
+published bar tables, and a take-off line that read `StringBuilder.length` instead of its
+own because it was computed inside `buildString`.
+
+Persisted data goes through `EntityRepository` + a `JsonCodec` (`core/storage`), so a new
+kind of record is a model, a codec and a one-line repository subclass.
+
 ## Hard rules
 
 - No hard-coded colours, sizes, radii, durations or font sizes. Everything comes from
@@ -29,5 +44,32 @@ Do **not** design a new screen. Assemble it:
 
 ## Verifying
 
-There is no Android SDK in the web sandbox, so builds run in GitHub Actions
-(`.github/workflows/android.yml`). Push the branch and read the workflow logs.
+There is no Android SDK in the web sandbox, so the full build runs in GitHub Actions
+(`.github/workflows/android.yml`): push the branch and read the workflow logs. The
+workflow runs `testDebugUnitTest` before it assembles anything, so a failing test stops
+the APK rather than shipping with it.
+
+Before pushing, the pure engines can be compiled and their tests run locally with a
+downloaded `kotlin-compiler-embeddable` — no Android SDK needed, because those files
+import nothing from Android. That loop catches type errors and wrong answers in seconds
+instead of a five-minute CI round trip.
+
+Its limitation is worth knowing: it cannot compile anything that touches Compose. Every
+compile error that has reached CI so far has been in a composable — a `@Composable`
+getter read inside a plain lambda, a trailing lambda binding to `enabled` instead of
+`onCheckedChange`. Re-read new composables for those specifically.
+
+## Being honest in the UI
+
+Where a tool cannot do something, the tool says so, in the tool, rather than failing
+quietly or implying otherwise:
+
+- Compressing a text-only PDF reports that there was nothing to compress instead of
+  writing an identical file and calling it smaller.
+- Clipboard History has a Save button because Android does not let an app read the
+  clipboard in the background — the empty state says exactly that.
+- The AI tools need the user's own API key, hold no bundled one, and say that the key is
+  stored unencrypted in app-private storage.
+- Load Tables applies no partial safety factor and says so.
+- `ToolStatus.Planned` entries stay in the catalogue with a description saying why they
+  are not built, rather than being hidden or faked.
