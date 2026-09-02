@@ -12,13 +12,33 @@ android {
         applicationId = "com.dawood.orbit"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        // Rises with every CI build so a new APK installs over the old one as
+        // an upgrade. A fixed versionCode makes Android treat every build as
+        // the same version, which is the other half of the "uninstall the old
+        // app first" problem.
+        versionCode = (System.getenv("ORBIT_VERSION_CODE") ?: "1").toInt()
+        versionName = "0.2.${System.getenv("ORBIT_VERSION_CODE") ?: "0"}"
+    }
+
+    signingConfigs {
+        create("ci") {
+            // Both build types share one stable key, so an APK from any build
+            // installs over any other without uninstalling first. Android
+            // refuses to replace an app with one signed by a different key,
+            // and CI's auto-generated debug key is different every run — which
+            // is why every install used to demand a wipe, taking the app's
+            // data with it.
+            storeFile = file("orbit-ci.jks")
+            storePassword = "orbitci"
+            keyAlias = "orbit"
+            keyPassword = "orbitci"
+        }
     }
 
     buildTypes {
         debug {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("ci")
         }
         release {
             isMinifyEnabled = true
@@ -27,9 +47,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            // Signed with the debug keystore so CI can produce an installable APK
-            // without secrets. Replace with a real signing config before shipping.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("ci")
         }
     }
 
@@ -89,6 +107,11 @@ dependencies {
     // Services one so the tool works on a device without Google services,
     // at the cost of a larger APK.
     implementation(libs.mlkit.text.recognition)
+
+    // Playing a video while it is still downloading, and previewing a link
+    // before committing to the download.
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.ui)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 

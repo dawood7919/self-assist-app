@@ -18,11 +18,22 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
 
+/** What the in-app player should open. */
+data class PlaybackRequest(
+    val title: String,
+    val url: String,
+    /** Set only for a finished file, which can be played from disk. */
+    val localPath: String?,
+    /** True when the bytes are coming over the network rather than off disk. */
+    val streaming: Boolean,
+)
+
 /** What the "paste a link" area is currently showing. */
 sealed interface ResolveUiState {
     data object Idle : ResolveUiState
     data object Working : ResolveUiState
-    data class Ready(val media: ResolvedMedia) : ResolveUiState
+    /** One or more downloadable files were found on the pasted link. */
+    data class Ready(val candidates: List<ResolvedMedia>) : ResolveUiState
     data class Error(val message: String) : ResolveUiState
 }
 
@@ -54,14 +65,21 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
         resolveState = ResolveUiState.Working
         viewModelScope.launch {
             resolveState = when (val result = resolver.resolve(target)) {
-                is ResolveResult.Success -> ResolveUiState.Ready(result.media)
+                is ResolveResult.Success -> ResolveUiState.Ready(result.candidates)
                 is ResolveResult.Failure -> ResolveUiState.Error(result.reason)
             }
         }
     }
 
+    /** Adds every file found on the page, for when the user wants the lot. */
+    fun enqueueAll(candidates: List<ResolvedMedia>) {
+        candidates.forEach { enqueue(it, clearInput = false) }
+        url = ""
+        resolveState = ResolveUiState.Idle
+    }
+
     /** Adds the resolved media to the queue and starts it immediately. */
-    fun enqueue(media: ResolvedMedia) {
+    fun enqueue(media: ResolvedMedia, clearInput: Boolean = true) {
         val context = getApplication<Application>()
         val id = UUID.randomUUID().toString()
         val directory = File(
@@ -84,8 +102,52 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
         )
         DownloadController.start(context, id)
 
-        url = ""
-        resolveState = ResolveUiState.Idle
+        if (clearInput) {
+            url = ""
+            resolveState = ResolveUiState.Idle
+        }
+    }
+
+    /**
+     * What the built-in player is showing, or null when it is closed.
+     *
+     * A running download is played from its source URL rather than from the
+     * partial file: the bytes on disk are being written out of order by the
+     * segmented transfer, so the file is not playable until it is finished.
+     */
+    var playing by mutableStateOf<PlaybackRequest?>(null)
+        private set
+
+    fun play(item: DownloadItem) {
+        playing = if (item.status == DownloadStatus.Completed) {
+            PlaybackRequest(
+                title = item.title,
+                url = item.mediaUrl,
+                localPath = File(item.partPath).takeIf { it.exists() }?.absolutePath,
+                streaming = false,
+            )
+        } else {
+            PlaybackRequest(
+                title = item.title,
+                url = item.mediaUrl,
+                localPath = null,
+                streaming = true,
+            )
+        }
+    }
+
+    /** Plays a candidate before deciding whether it is worth downloading. */
+    fun preview(media: ResolvedMedia) {
+        playing = PlaybackRequest(
+            title = media.title,
+            url = media.mediaUrl,
+            localPath = null,
+            streaming = true,
+        )
+    }
+
+    fun stopPlaying() {
+        playing = null
     }
 
     fun pause(id: String) = DownloadController.pause(getApplication<Application>(), id)

@@ -1,6 +1,9 @@
 package com.dawood.orbit.tools.videodownloader.resolve
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -21,7 +24,15 @@ data class ResolvedMedia(
 )
 
 sealed interface ResolveResult {
-    data class Success(val media: ResolvedMedia) : ResolveResult
+    /**
+     * Everything downloadable that was found, best first.
+     *
+     * A page usually holds more than one video, so this is a list even when it
+     * has a single entry: the caller shows a picker when there is a choice and
+     * goes straight through when there is not.
+     */
+    data class Success(val candidates: List<ResolvedMedia>) : ResolveResult
+
     data class Failure(val reason: String) : ResolveResult
 }
 
@@ -54,7 +65,7 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
                 ResolveResult.Failure("The server did not respond to that link.")
 
             direct.isMedia ->
-                ResolveResult.Success(direct.toMedia(titleHint = null))
+                ResolveResult.Success(listOf(direct.toMedia(titleHint = null)))
 
             direct.isHtml -> resolveFromPage(url)
 
@@ -90,25 +101,43 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
             )
         }
 
-        var hlsSeen = false
-        for (candidate in candidates) {
-            if (isHls(candidate)) {
-                hlsSeen = true
-                continue
-            }
-            val probed = runCatching { probe(candidate, referer = pageUrl) }.getOrNull()
-            if (probed != null && probed.isMedia) {
-                return ResolveResult.Success(probed.toMedia(titleHint = pageTitle))
-            }
+        val downloadable = candidates.filterNot { isHls(it) }.take(MAX_PROBES)
+        val hlsSeen = candidates.any { isHls(it) }
+
+        // Probed in parallel: a page with a dozen candidates would otherwise
+        // take a dozen round trips before showing the user anything.
+        val probed = coroutineScope {
+            downloadable
+                .map { candidate ->
+                    async(Dispatchers.IO) {
+                        runCatching { probe(candidate, referer = pageUrl) }.getOrNull()
+                    }
+                }
+                .awaitAll()
         }
 
-        return if (hlsSeen) {
-            ResolveResult.Failure(
+        val media = probed
+            .filterNotNull()
+            .filter { it.isMedia }
+            .distinctBy { it.finalUrl }
+            .mapIndexed { index, item ->
+                // Only the first gets the page title; the rest would all end up
+                // with the same name and overwrite each other in the queue.
+                item.toMedia(titleHint = if (index == 0) pageTitle else null)
+            }
+            .sortedByDescending { it.sizeBytes }
+
+        return when {
+            media.isNotEmpty() -> ResolveResult.Success(media)
+
+            hlsSeen -> ResolveResult.Failure(
                 "That page streams over HLS (.m3u8). Saving it means downloading and " +
                     "joining hundreds of segments, which this build does not do yet.",
             )
-        } else {
-            ResolveResult.Failure("Found media links on that page, but none of them could be downloaded.")
+
+            else -> ResolveResult.Failure(
+                "Found media links on that page, but none of them could be downloaded.",
+            )
         }
     }
 
@@ -136,9 +165,23 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
         document.select("audio[src]").forEach { add(it.absUrl("src")) }
         document.select("link[rel=alternate][type^=video]").forEach { add(it.absUrl("href")) }
 
+        // Lazy players keep the real file on a data attribute until playback.
+        document.select("[data-video-src], [data-src], [data-url], [data-file]").forEach { element ->
+            listOf("data-video-src", "data-src", "data-url", "data-file").forEach { attribute ->
+                val value = element.attr(attribute)
+                if (value.isNotBlank() && MEDIA_EXTENSIONS.any { value.substringBefore('?').lowercase(Locale.ROOT).endsWith(it) }) {
+                    add(element.absUrl(attribute).ifEmpty { value })
+                }
+            }
+        }
+        document.select("a[href]").forEach { anchor ->
+            val href = anchor.absUrl("href")
+            if (MEDIA_EXTENSIONS.any { href.substringBefore('?').lowercase(Locale.ROOT).endsWith(it) }) add(href)
+        }
+
         // JSON-LD and inline players keep the real file in a plain string.
         JSON_MEDIA_KEY.findAll(rawHtml).forEach { match -> add(unescape(match.groupValues[1])) }
-        INLINE_MEDIA_URL.findAll(rawHtml).take(40).forEach { match -> add(unescape(match.value)) }
+        INLINE_MEDIA_URL.findAll(rawHtml).take(60).forEach { match -> add(unescape(match.value)) }
 
         return found.toList()
     }
@@ -295,6 +338,9 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
 
     private companion object {
         const val MAX_HTML_BYTES = 2L * 1024 * 1024
+
+        /** Probing is a network round trip each, so the list is capped. */
+        const val MAX_PROBES = 14
 
         val MEDIA_EXTENSIONS = listOf(
             ".mp4", ".m4v", ".webm", ".mkv", ".mov", ".avi", ".flv", ".ts",

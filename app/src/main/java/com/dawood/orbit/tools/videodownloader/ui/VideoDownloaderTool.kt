@@ -51,6 +51,7 @@ import com.dawood.orbit.tools.shell.ToolShell
 import com.dawood.orbit.tools.shell.ToolStatusLine
 import com.dawood.orbit.tools.shell.ToolWorkspace
 import com.dawood.orbit.tools.videodownloader.model.DownloadItem
+import com.dawood.orbit.tools.videodownloader.resolve.ResolvedMedia
 import com.dawood.orbit.tools.videodownloader.model.DownloadStatus
 import com.dawood.orbit.tools.videodownloader.service.DownloadService
 import java.util.Locale
@@ -219,9 +220,11 @@ fun VideoDownloaderTool(
                                 onRetry = viewModel::resolve,
                             )
 
-                            is ResolveUiState.Ready -> ResolvedCard(
-                                media = state.media,
-                                onDownload = { viewModel.enqueue(state.media) },
+                            is ResolveUiState.Ready -> ResolvedCandidates(
+                                candidates = state.candidates,
+                                onDownload = { viewModel.enqueue(it) },
+                                onDownloadAll = { viewModel.enqueueAll(state.candidates) },
+                                onPreview = { viewModel.preview(it) },
                                 onDismiss = viewModel::dismissResolve,
                             )
                         }
@@ -259,6 +262,7 @@ fun VideoDownloaderTool(
                             downloads.sortedByDescending { it.createdAt }.forEach { item ->
                                 DownloadRow(
                                     item = item,
+                                    onPlay = { viewModel.play(item) },
                                     onPause = { viewModel.pause(item.id) },
                                     onResume = { viewModel.resume(item.id) },
                                     onRetry = { viewModel.retry(item.id) },
@@ -270,14 +274,22 @@ fun VideoDownloaderTool(
                     }
 
                     ToolFooter(
-                        text = "Works with direct media links and pages that expose their video " +
-                            "openly. Sites that sign every stream per session, and anything " +
-                            "behind DRM, are not supported. Only download what you have the " +
-                            "right to keep.",
+                        text = "Large files are pulled over several connections at once, which is " +
+                            "what actually uses the available bandwidth — a single stream to a " +
+                            "distant server is usually capped long before your connection is. " +
+                            "Sites that sign every stream per session, and anything behind DRM, " +
+                            "are not supported. Only download what you have the right to keep.",
                     )
                 }
             }
         }
+
+        // The player sits above the workspace so it covers the queue while
+        // something is playing, and releases the decoder when dismissed.
+        VideoPlayerModal(
+            request = viewModel.playing,
+            onDismiss = viewModel::stopPlaying,
+        )
     }
 }
 
@@ -285,8 +297,9 @@ fun VideoDownloaderTool(
 
 @Composable
 private fun ResolvedCard(
-    media: com.dawood.orbit.tools.videodownloader.resolve.ResolvedMedia,
+    media: ResolvedMedia,
     onDownload: () -> Unit,
+    onPreview: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     OrbitCard(color = OrbitTheme.colors.surfaceSunken) {
@@ -342,6 +355,13 @@ private fun ResolvedCard(
             }
             Box(Modifier.weight(1f))
             OrbitButton(
+                text = "Preview",
+                onClick = onPreview,
+                variant = OrbitButtonVariant.Ghost,
+                size = OrbitButtonSize.Small,
+                leadingIcon = OrbitIcons.Play,
+            )
+            OrbitButton(
                 text = "Download",
                 onClick = onDownload,
                 leadingIcon = OrbitIcons.Download,
@@ -350,9 +370,63 @@ private fun ResolvedCard(
     }
 }
 
+/**
+ * Everything the pasted link turned out to hold.
+ *
+ * A page usually carries more than one video, so the tool shows the lot and
+ * lets the user pick rather than guessing which one they meant. Each can be
+ * previewed before committing to the download.
+ */
+@Composable
+private fun ResolvedCandidates(
+    candidates: List<ResolvedMedia>,
+    onDownload: (ResolvedMedia) -> Unit,
+    onDownloadAll: () -> Unit,
+    onPreview: (ResolvedMedia) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
+        if (candidates.size > 1) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+            ) {
+                OrbitText(
+                    text = "${candidates.size} files on that page",
+                    style = OrbitTheme.typography.h4,
+                    modifier = Modifier.weight(1f),
+                )
+                OrbitButton(
+                    text = "Download all",
+                    onClick = onDownloadAll,
+                    variant = OrbitButtonVariant.Secondary,
+                    size = OrbitButtonSize.Small,
+                    leadingIcon = OrbitIcons.Download,
+                )
+                OrbitIconButton(
+                    icon = OrbitIcons.Close,
+                    contentDescription = "Dismiss",
+                    onClick = onDismiss,
+                    size = OrbitButtonSize.Small,
+                )
+            }
+        }
+        candidates.forEach { media ->
+            ResolvedCard(
+                media = media,
+                onDownload = { onDownload(media) },
+                onPreview = { onPreview(media) },
+                onDismiss = onDismiss,
+            )
+        }
+    }
+}
+
 @Composable
 private fun DownloadRow(
     item: DownloadItem,
+    onPlay: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
     onRetry: () -> Unit,
@@ -394,6 +468,18 @@ private fun DownloadRow(
                     maxLines = 1,
                 )
             }
+            // Watch it now, without waiting for the download to finish.
+            OrbitIconButton(
+                icon = OrbitIcons.Video,
+                contentDescription = if (item.status == DownloadStatus.Completed) {
+                    "Play the downloaded file"
+                } else {
+                    "Watch while it downloads"
+                },
+                onClick = onPlay,
+                size = OrbitButtonSize.Small,
+            )
+
             when (item.status) {
                 DownloadStatus.Running, DownloadStatus.Queued, DownloadStatus.Resolving ->
                     OrbitIconButton(OrbitIcons.Pause, "Pause", onPause, size = OrbitButtonSize.Small)
@@ -430,6 +516,12 @@ private fun DownloadRow(
             horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
         ) {
             OrbitBadge(statusLabel(item), tone = tone, showDot = true)
+            if (item.isSegmented && item.status == DownloadStatus.Running) {
+                OrbitBadge(
+                    text = "${item.segments.size} connections",
+                    tone = OrbitTone.Info,
+                )
+            }
             if (!item.resumable && item.status != DownloadStatus.Completed) {
                 OrbitBadge("Restarts on pause", tone = OrbitTone.Neutral)
             }

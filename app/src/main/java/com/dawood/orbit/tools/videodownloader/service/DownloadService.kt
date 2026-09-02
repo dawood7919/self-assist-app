@@ -96,8 +96,17 @@ class DownloadService : Service() {
         jobs[id] = job
     }
 
+    /**
+     * Pausing sets the status first, then cancels.
+     *
+     * The order matters. A transfer that is mid-read cannot notice the
+     * cancellation until its current socket read returns, and until this
+     * commit the engine's next progress tick would write `Running` back over
+     * the paused row — so the button appeared to need two taps. Writing the
+     * status first means any tick that lands in that window sees a row that is
+     * no longer running and leaves it alone.
+     */
     private fun pauseDownload(id: String) {
-        jobs.remove(id)?.cancel()
         repository.update(id) { item ->
             if (item.status == DownloadStatus.Completed) {
                 item
@@ -105,10 +114,12 @@ class DownloadService : Service() {
                 item.copy(status = DownloadStatus.Paused, speedBytesPerSecond = 0L)
             }
         }
+        jobs.remove(id)?.cancel()
         repository.persist()
     }
 
     private fun cancelDownload(id: String) {
+        repository.update(id) { it.copy(status = DownloadStatus.Paused, speedBytesPerSecond = 0L) }
         jobs.remove(id)?.cancel()
         repository.remove(id, deleteFile = true)
     }
@@ -186,7 +197,7 @@ class DownloadService : Service() {
                 if (current != null) {
                     addAction(
                         0,
-                        "Pause",
+                        if (active.size > 1) "Pause all" else "Pause",
                         servicePendingIntent(ACTION_PAUSE_ALL, current.id, requestCode = 1),
                     )
                 }
@@ -227,6 +238,8 @@ class DownloadService : Service() {
         private const val CHANNEL_ID = "orbit.downloads"
         private const val NOTIFICATION_ID = 4201
         private const val NOTIFICATION_INTERVAL_MS = 1000L
+        // Files, not connections: each of these may itself open several
+        // sockets, so three at once is already a lot of parallelism.
         private const val MAX_CONCURRENT = 3
 
         const val EXTRA_ID = "download_id"

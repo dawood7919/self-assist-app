@@ -3,6 +3,7 @@ package com.dawood.orbit.tools.videodownloader.data
 import android.content.Context
 import com.dawood.orbit.tools.videodownloader.model.DownloadItem
 import com.dawood.orbit.tools.videodownloader.model.DownloadStatus
+import com.dawood.orbit.tools.videodownloader.model.Segment
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -66,6 +67,22 @@ internal class DownloadStore(context: Context) {
         put("createdAt", createdAt)
         put("completedAt", completedAt ?: JSONObject.NULL)
         put("savedLocation", savedLocation ?: JSONObject.NULL)
+        // Per-segment progress is what lets a parallel download resume without
+        // re-fetching bytes that are already on disk.
+        put(
+            "segments",
+            JSONArray().apply {
+                segments.forEach { segment ->
+                    put(
+                        JSONObject().apply {
+                            put("start", segment.start)
+                            put("end", segment.end)
+                            put("completed", segment.completed)
+                        },
+                    )
+                }
+            },
+        )
     }
 
     private fun JSONObject.toItem(): DownloadItem = DownloadItem(
@@ -87,6 +104,18 @@ internal class DownloadStore(context: Context) {
         createdAt = optLong("createdAt", System.currentTimeMillis()),
         completedAt = if (isNull("completedAt")) null else optLong("completedAt"),
         savedLocation = optStringOrNull("savedLocation"),
+        segments = optJSONArray("segments")?.let { array ->
+            (0 until array.length()).mapNotNull { index ->
+                runCatching {
+                    val json = array.getJSONObject(index)
+                    Segment(
+                        start = json.getLong("start"),
+                        end = json.getLong("end"),
+                        completed = json.optLong("completed", 0L),
+                    )
+                }.getOrNull()
+            }
+        }.orEmpty(),
     )
 
     private fun JSONObject.optStringOrNull(key: String): String? =

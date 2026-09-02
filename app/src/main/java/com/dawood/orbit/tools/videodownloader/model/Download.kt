@@ -32,12 +32,21 @@ data class DownloadItem(
     val lastModified: String? = null,
     /** False when the server refuses byte ranges: pausing then means restarting. */
     val resumable: Boolean = true,
+    /**
+     * The parallel byte ranges this file is being pulled in, empty when the
+     * transfer is a single stream. Persisted, so a resume reopens exactly the
+     * connections that were still unfinished.
+     */
+    val segments: List<Segment> = emptyList(),
     val createdAt: Long = System.currentTimeMillis(),
     val completedAt: Long? = null,
     /** Where the finished file ended up, once exported out of the app's cache. */
     val savedLocation: String? = null,
     val speedBytesPerSecond: Long = 0L,
 ) {
+    /** True while the file is being pulled over several connections at once. */
+    val isSegmented: Boolean get() = segments.size > 1
+
     val progress: Float?
         get() = if (totalBytes > 0L) {
             (downloadedBytes.toFloat() / totalBytes).coerceIn(0f, 1f)

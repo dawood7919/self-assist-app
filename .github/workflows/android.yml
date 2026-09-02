@@ -45,9 +45,13 @@ jobs:
 
       - name: Assemble debug APK
         run: ./gradlew --no-daemon assembleDebug
+        env:
+          ORBIT_VERSION_CODE: ${{ github.run_number }}
 
       - name: Assemble release APK
         run: ./gradlew --no-daemon assembleRelease
+        env:
+          ORBIT_VERSION_CODE: ${{ github.run_number }}
 
       - name: Collect APKs
         id: collect
