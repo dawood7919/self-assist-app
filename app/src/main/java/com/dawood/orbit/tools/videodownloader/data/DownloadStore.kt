@@ -35,8 +35,6 @@ internal class DownloadStore(context: Context) {
         runCatching {
             val array = JSONArray()
             items.forEach { array.put(it.toJson()) }
-            // Write through a temp file so a crash mid-write cannot leave the
-            // queue truncated and unreadable on next launch.
             val temp = File(file.parentFile, "${file.name}.tmp")
             temp.writeText(array.toString())
             temp.renameTo(file)
@@ -53,8 +51,6 @@ internal class DownloadStore(context: Context) {
         put("partPath", partPath)
         put("totalBytes", totalBytes)
         put("downloadedBytes", downloadedBytes)
-        // An interrupted process leaves rows marked Running; they are really
-        // paused, so normalise on the way out rather than lying on next launch.
         put("status", if (status == DownloadStatus.Running || status == DownloadStatus.Resolving) {
             DownloadStatus.Paused.name
         } else {
@@ -68,8 +64,9 @@ internal class DownloadStore(context: Context) {
         put("completedAt", completedAt ?: JSONObject.NULL)
         put("savedLocation", savedLocation ?: JSONObject.NULL)
         put("thumbnailUrl", thumbnailUrl ?: JSONObject.NULL)
-        // Per-segment progress is what lets a parallel download resume without
-        // re-fetching bytes that are already on disk.
+        put("playlistGroupId", playlistGroupId ?: JSONObject.NULL)
+        put("playlistTitle", playlistTitle ?: JSONObject.NULL)
+        put("qualityLabel", qualityLabel ?: JSONObject.NULL)
         put(
             "segments",
             JSONArray().apply {
@@ -106,6 +103,9 @@ internal class DownloadStore(context: Context) {
         completedAt = if (isNull("completedAt")) null else optLong("completedAt"),
         savedLocation = optStringOrNull("savedLocation"),
         thumbnailUrl = optStringOrNull("thumbnailUrl"),
+        playlistGroupId = optStringOrNull("playlistGroupId"),
+        playlistTitle = optStringOrNull("playlistTitle"),
+        qualityLabel = optStringOrNull("qualityLabel"),
         segments = optJSONArray("segments")?.let { array ->
             (0 until array.length()).mapNotNull { index ->
                 runCatching {
