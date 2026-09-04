@@ -2,31 +2,41 @@ package com.dawood.orbit.tools.videodownloader.ui
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
+import android.view.ViewGroup
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -37,28 +47,31 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.dawood.orbit.core.designsystem.component.OrbitBadge
+import com.dawood.orbit.core.designsystem.component.OrbitButton
+import com.dawood.orbit.core.designsystem.component.OrbitButtonSize
+import com.dawood.orbit.core.designsystem.component.OrbitButtonVariant
 import com.dawood.orbit.core.designsystem.component.OrbitIconButton
-import com.dawood.orbit.core.designsystem.component.OrbitModal
 import com.dawood.orbit.core.designsystem.component.OrbitText
 import com.dawood.orbit.core.designsystem.component.OrbitTone
 import com.dawood.orbit.core.designsystem.icon.OrbitIcons
 import com.dawood.orbit.core.designsystem.theme.OrbitTheme
 import com.dawood.orbit.tools.videodownloader.resolve.HttpClients
+import com.dawood.orbit.tools.videodownloader.resolve.ResolvedMedia
+import kotlinx.coroutines.delay
+import java.util.Locale
+import java.util.concurrent.TimeUnit
 
-/** How far the skip buttons jump. */
-private const val SEEK_STEP_MS = 30_000L
+private const val SEEK_SHORT_MS = 10_000L
+private const val SEEK_LONG_MS = 30_000L
 
 /**
- * Plays a video without leaving the app.
+ * In-app player: play / pause, seek, quality pick, immersive fullscreen.
  *
- * A download that is still running is played from its source URL rather than
- * from the file on disk. That is not a shortcut: the segmented transfer writes
- * several parts of the file at once, so the bytes on disk are full of holes
- * until every connection finishes and nothing could play them. Streaming the
- * same URL gives the user what they actually want — watch it now — while the
- * download carries on underneath.
+ * Opens full-screen by default (VLC-style watch surface). System bars are
+ * hidden while open and restored on dismiss.
  */
 @OptIn(UnstableApi::class)
 @Composable
@@ -67,26 +80,52 @@ fun VideoPlayerModal(
     onDismiss: () -> Unit,
 ) {
     if (request == null) return
+
     val context = LocalContext.current
     var error by remember(request.url) { mutableStateOf<String?>(null) }
-    var fullscreen by remember(request.url) { mutableStateOf(false) }
+    var controlsVisible by remember(request.url) { mutableStateOf(true) }
+    var isPlaying by remember(request.url) { mutableStateOf(true) }
+    var positionMs by remember(request.url) { mutableLongStateOf(0L) }
+    var durationMs by remember(request.url) { mutableLongStateOf(0L) }
+    var buffered by remember(request.url) { mutableFloatStateOf(0f) }
+
+    val qualities = remember(request) {
+        request.qualities.ifEmpty {
+            listOf(
+                ResolvedMedia(
+                    mediaUrl = request.url,
+                    title = request.title,
+                    fileName = "video.mp4",
+                    mimeType = "video/mp4",
+                    sizeBytes = -1L,
+                    resumable = true,
+                    qualityLabel = null,
+                ),
+            )
+        }
+    }
+    var selectedQuality by remember(request.url) {
+        mutableStateOf(
+            qualities.firstOrNull {
+                it.mediaUrl == request.url || it.mediaUrl == (request.localPath ?: request.url)
+            } ?: qualities.first(),
+        )
+    }
+    var qualityMenuOpen by remember { mutableStateOf(false) }
 
     val player = remember(request.url, request.localPath) {
-        // The same browser identity the downloader uses: hosts that refuse an
-        // unknown agent for the download refuse it for playback too.
         val httpFactory = DefaultHttpDataSource.Factory()
             .setUserAgent(HttpClients.USER_AGENT)
             .setAllowCrossProtocolRedirects(true)
 
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(httpFactory))
-            // These drive the skip buttons the controls already know how to
-            // draw, so the step is set once here rather than wired by hand.
-            .setSeekBackIncrementMs(SEEK_STEP_MS)
-            .setSeekForwardIncrementMs(SEEK_STEP_MS)
+            .setSeekBackIncrementMs(SEEK_LONG_MS)
+            .setSeekForwardIncrementMs(SEEK_LONG_MS)
             .build()
             .apply {
-                setMediaItem(MediaItem.fromUri(request.localPath ?: request.url))
+                val uri = request.localPath ?: selectedQuality.mediaUrl
+                setMediaItem(MediaItem.fromUri(uri))
                 playWhenReady = true
                 prepare()
             }
@@ -97,6 +136,10 @@ fun VideoPlayerModal(
             override fun onPlayerError(exception: PlaybackException) {
                 error = exception.errorCodeName
             }
+
+            override fun onIsPlayingChanged(playing: Boolean) {
+                isPlaying = playing
+            }
         }
         player.addListener(listener)
         onDispose {
@@ -105,97 +148,37 @@ fun VideoPlayerModal(
         }
     }
 
-    if (fullscreen) {
-        FullscreenPlayer(
-            player = player,
-            onExit = { fullscreen = false },
-        )
-        return
-    }
-
-    OrbitModal(
-        visible = true,
-        onDismiss = onDismiss,
-        title = request.title,
-        description = if (request.streaming) {
-            "Streaming from the source while the download continues."
-        } else {
-            null
-        },
-        width = OrbitTheme.sizes.readingMaxWidth,
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md)) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(16f / 9f)
-                    .clip(OrbitTheme.radius.shapeMd)
-                    .background(Color.Black),
-            ) {
-                PlayerSurface(player = player, modifier = Modifier.fillMaxSize())
-
-                OrbitIconButton(
-                    icon = OrbitIcons.Fullscreen,
-                    contentDescription = "Full screen",
-                    onClick = { fullscreen = true },
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(OrbitTheme.spacing.sm),
-                    tint = Color.White,
-                )
-            }
-
-            // Explicit skip controls rather than relying on whatever the
-            // built-in controller chooses to draw, and reachable without
-            // waking the overlay first.
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
-            ) {
-                OrbitIconButton(
-                    icon = OrbitIcons.Replay30,
-                    contentDescription = "Back 30 seconds",
-                    onClick = { player.seekBack() },
-                )
-                OrbitIconButton(
-                    icon = OrbitIcons.Forward30,
-                    contentDescription = "Forward 30 seconds",
-                    onClick = { player.seekForward() },
-                )
-                Box(Modifier.weight(1f))
-                if (request.streaming) {
-                    OrbitBadge("Playing from the network", tone = OrbitTone.Info)
-                }
-            }
-
-            error?.let { code ->
-                OrbitText(
-                    text = "Playback failed ($code). Some hosts allow the file to be downloaded " +
-                        "but refuse to stream it, and a partly-downloaded file cannot be played " +
-                        "until it finishes.",
-                    style = OrbitTheme.typography.bodySmall,
-                    color = OrbitTheme.colors.error,
-                )
-            }
+    // Position ticker for the scrub bar
+    LaunchedEffect(player) {
+        while (true) {
+            positionMs = player.currentPosition.coerceAtLeast(0L)
+            durationMs = player.duration.takeIf { it > 0 } ?: 0L
+            buffered = player.bufferedPercentage / 100f
+            delay(250)
         }
     }
-}
 
-/**
- * The same player, filling the screen.
- *
- * The activity is put into landscape and the system bars are hidden for the
- * duration, then both are put back exactly as they were — leaving an app
- * locked in landscape after a video is a bug people notice immediately.
- */
-@OptIn(UnstableApi::class)
-@Composable
-private fun FullscreenPlayer(
-    player: ExoPlayer,
-    onExit: () -> Unit,
-) {
-    val context = LocalContext.current
+    // Auto-hide controls
+    LaunchedEffect(controlsVisible, isPlaying) {
+        if (controlsVisible && isPlaying) {
+            delay(3200)
+            controlsVisible = false
+            qualityMenuOpen = false
+        }
+    }
+
+    fun switchQuality(media: ResolvedMedia) {
+        val pos = player.currentPosition
+        val wasPlaying = player.isPlaying
+        selectedQuality = media
+        player.setMediaItem(MediaItem.fromUri(media.mediaUrl))
+        player.prepare()
+        player.seekTo(pos)
+        player.playWhenReady = wasPlaying
+        qualityMenuOpen = false
+        error = null
+    }
+
     val activity = remember(context) { context.findActivity() }
 
     DisposableEffect(activity) {
@@ -203,7 +186,6 @@ private fun FullscreenPlayer(
         val controller = activity?.window?.let { window ->
             WindowInsetsControllerCompat(window, window.decorView)
         }
-
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         activity?.window?.let { WindowCompat.setDecorFitsSystemWindows(it, false) }
         controller?.apply {
@@ -211,7 +193,6 @@ private fun FullscreenPlayer(
             systemBarsBehavior =
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
-
         onDispose {
             controller?.show(WindowInsetsCompat.Type.systemBars())
             activity?.window?.let { WindowCompat.setDecorFitsSystemWindows(it, true) }
@@ -220,57 +201,221 @@ private fun FullscreenPlayer(
     }
 
     Dialog(
-        onDismissRequest = onExit,
+        onDismissRequest = onDismiss,
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
             dismissOnBackPress = true,
             dismissOnClickOutside = false,
+            decorFitsSystemWindows = false,
         ),
     ) {
-        BackHandler(onBack = onExit)
+        val dialogView = LocalView.current
+        DisposableEffect(dialogView) {
+            (dialogView.parent as? DialogWindowProvider)?.window?.apply {
+                setLayout(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                )
+                addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS)
+            }
+            onDispose { }
+        }
+
+        BackHandler(onBack = onDismiss)
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black),
+                .background(Color.Black)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) {
+                    controlsVisible = !controlsVisible
+                    if (!controlsVisible) qualityMenuOpen = false
+                },
         ) {
-            PlayerSurface(player = player, modifier = Modifier.fillMaxSize())
+            PlayerSurface(
+                player = player,
+                modifier = Modifier.fillMaxSize(),
+            )
 
-            Row(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(OrbitTheme.spacing.md),
-                horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
-            ) {
-                OrbitIconButton(
-                    icon = OrbitIcons.Replay30,
-                    contentDescription = "Back 30 seconds",
-                    onClick = { player.seekBack() },
-                    tint = Color.White,
-                )
-                OrbitIconButton(
-                    icon = OrbitIcons.Forward30,
-                    contentDescription = "Forward 30 seconds",
-                    onClick = { player.seekForward() },
-                    tint = Color.White,
-                )
-                OrbitIconButton(
-                    icon = OrbitIcons.FullscreenExit,
-                    contentDescription = "Leave full screen",
-                    onClick = onExit,
-                    tint = Color.White,
+            if (controlsVisible) {
+                // Top bar
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(OrbitTheme.spacing.md),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+                ) {
+                    OrbitIconButton(
+                        icon = OrbitIcons.Close,
+                        contentDescription = "Close",
+                        onClick = onDismiss,
+                        tint = Color.White,
+                    )
+                    OrbitText(
+                        text = request.title,
+                        style = OrbitTheme.typography.h4,
+                        color = Color.White,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (qualities.size > 1) {
+                        OrbitButton(
+                            text = selectedQuality.qualityLabel ?: "Quality",
+                            onClick = { qualityMenuOpen = !qualityMenuOpen },
+                            variant = OrbitButtonVariant.Ghost,
+                            size = OrbitButtonSize.Small,
+                        )
+                    }
+                }
+
+                // Center transport
+                Row(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.lg),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OrbitIconButton(
+                        icon = OrbitIcons.Replay30,
+                        contentDescription = "Back 30s",
+                        onClick = { player.seekTo((player.currentPosition - SEEK_LONG_MS).coerceAtLeast(0)) },
+                        tint = Color.White,
+                    )
+                    OrbitIconButton(
+                        icon = OrbitIcons.Replay10,
+                        contentDescription = "Back 10s",
+                        onClick = { player.seekTo((player.currentPosition - SEEK_SHORT_MS).coerceAtLeast(0)) },
+                        tint = Color.White,
+                    )
+                    OrbitIconButton(
+                        icon = if (isPlaying) OrbitIcons.Pause else OrbitIcons.Play,
+                        contentDescription = if (isPlaying) "Pause" else "Play",
+                        onClick = {
+                            if (player.isPlaying) player.pause() else player.play()
+                        },
+                        tint = Color.White,
+                    )
+                    OrbitIconButton(
+                        icon = OrbitIcons.Forward10,
+                        contentDescription = "Forward 10s",
+                        onClick = {
+                            val d = player.duration
+                            val target = player.currentPosition + SEEK_SHORT_MS
+                            player.seekTo(if (d > 0) target.coerceAtMost(d) else target)
+                        },
+                        tint = Color.White,
+                    )
+                    OrbitIconButton(
+                        icon = OrbitIcons.Forward30,
+                        contentDescription = "Forward 30s",
+                        onClick = {
+                            val d = player.duration
+                            val target = player.currentPosition + SEEK_LONG_MS
+                            player.seekTo(if (d > 0) target.coerceAtMost(d) else target)
+                        },
+                        tint = Color.White,
+                    )
+                }
+
+                // Bottom scrub
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(OrbitTheme.spacing.md),
+                    verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xs),
+                ) {
+                    if (request.streaming) {
+                        OrbitBadge("Streaming", tone = OrbitTone.Info)
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+                    ) {
+                        OrbitText(
+                            text = formatPlayerTime(positionMs),
+                            style = OrbitTheme.typography.caption,
+                            color = Color.White,
+                        )
+                        // Simple progress: tap zones left/right handled by seek buttons;
+                        // visual bar only (full scrub gesture kept light).
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(vertical = OrbitTheme.spacing.sm)
+                                .background(Color.White.copy(alpha = 0.25f))
+                                .clickable { /* reserved for future scrub */ },
+                        ) {
+                            val progress = if (durationMs > 0) {
+                                (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
+                            } else {
+                                0f
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(progress)
+                                    .padding(vertical = OrbitTheme.spacing.xxs)
+                                    .background(Color.White),
+                            )
+                        }
+                        OrbitText(
+                            text = if (durationMs > 0) formatPlayerTime(durationMs) else "--:--",
+                            style = OrbitTheme.typography.caption,
+                            color = Color.White,
+                        )
+                    }
+                }
+
+                // Quality menu
+                if (qualityMenuOpen && qualities.size > 1) {
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .statusBarsPadding()
+                            .padding(top = OrbitTheme.spacing.xxl, end = OrbitTheme.spacing.md)
+                            .background(Color.Black.copy(alpha = 0.85f))
+                            .padding(OrbitTheme.spacing.sm),
+                        verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xs),
+                    ) {
+                        qualities.forEach { q ->
+                            val label = q.qualityLabel ?: q.mimeType
+                            val selected = q.mediaUrl == selectedQuality.mediaUrl
+                            OrbitButton(
+                                text = if (selected) "● $label" else label,
+                                onClick = { switchQuality(q) },
+                                variant = if (selected) {
+                                    OrbitButtonVariant.Primary
+                                } else {
+                                    OrbitButtonVariant.Ghost
+                                },
+                                size = OrbitButtonSize.Small,
+                            )
+                        }
+                    }
+                }
+            }
+
+            error?.let { code ->
+                OrbitText(
+                    text = "Playback failed ($code)",
+                    style = OrbitTheme.typography.bodySmall,
+                    color = OrbitTheme.colors.error,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(OrbitTheme.spacing.lg),
                 )
             }
         }
     }
 }
 
-/**
- * The video surface itself.
- *
- * `setPlayer(null)` on dispose matters: two views attached to one player leave
- * the old one holding a surface, which shows as a black rectangle after
- * leaving full screen.
- */
 @OptIn(UnstableApi::class)
 @Composable
 private fun PlayerSurface(player: ExoPlayer, modifier: Modifier = Modifier) {
@@ -278,18 +423,29 @@ private fun PlayerSurface(player: ExoPlayer, modifier: Modifier = Modifier) {
         factory = { viewContext ->
             PlayerView(viewContext).apply {
                 this.player = player
-                useController = true
-                setShowRewindButton(true)
-                setShowFastForwardButton(true)
-                setShowNextButton(false)
-                setShowPreviousButton(false)
-                setShowSubtitleButton(false)
-                controllerShowTimeoutMs = 2500
+                useController = false // custom controls only
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                )
             }
         },
         onRelease = { view -> view.player = null },
         modifier = modifier,
     )
+}
+
+private fun formatPlayerTime(ms: Long): String {
+    val totalSec = TimeUnit.MILLISECONDS.toSeconds(ms).coerceAtLeast(0)
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return if (h > 0) {
+        String.format(Locale.US, "%d:%02d:%02d", h, m, s)
+    } else {
+        String.format(Locale.US, "%d:%02d", m, s)
+    }
 }
 
 private fun android.content.Context.findActivity(): Activity? {
