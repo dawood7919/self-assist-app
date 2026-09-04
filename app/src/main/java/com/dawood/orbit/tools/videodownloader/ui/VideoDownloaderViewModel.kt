@@ -1,17 +1,19 @@
 package com.dawood.orbit.tools.videodownloader.ui
 
 import android.app.Application
-import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
 import com.dawood.orbit.tools.videodownloader.data.DownloadRepository
 import com.dawood.orbit.tools.videodownloader.model.DownloadItem
 import com.dawood.orbit.tools.videodownloader.model.DownloadStatus
 import com.dawood.orbit.tools.videodownloader.resolve.MediaResolver
+import com.dawood.orbit.tools.videodownloader.resolve.PlaylistEntry
 import com.dawood.orbit.tools.videodownloader.resolve.ResolveResult
 import com.dawood.orbit.tools.videodownloader.resolve.ResolvedMedia
+import com.dawood.orbit.tools.videodownloader.resolve.ResolvedPlaylist
 import com.dawood.orbit.tools.videodownloader.service.DownloadController
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -32,8 +34,23 @@ data class PlaybackRequest(
 sealed interface ResolveUiState {
     data object Idle : ResolveUiState
     data object Working : ResolveUiState
+
     /** One or more downloadable files were found on the pasted link. */
     data class Ready(val candidates: List<ResolvedMedia>) : ResolveUiState
+
+    /**
+     * A playlist. [selectedUrls] are the entry URLs the user has ticked.
+     * [enqueueing] is true while selected items are being resolved into the queue.
+     */
+    data class Playlist(
+        val playlist: ResolvedPlaylist,
+        val selectedUrls: Set<String> = playlist.entries.map { it.url }.toSet(),
+        val enqueueing: Boolean = false,
+        val enqueueProgress: Int = 0,
+        val enqueueTotal: Int = 0,
+        val lastError: String? = null,
+    ) : ResolveUiState
+
     data class Error(val message: String) : ResolveUiState
 }
 
@@ -66,6 +83,7 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
         viewModelScope.launch {
             resolveState = when (val result = resolver.resolve(target)) {
                 is ResolveResult.Success -> ResolveUiState.Ready(result.candidates)
+                is ResolveResult.Playlist -> ResolveUiState.Playlist(result.playlist)
                 is ResolveResult.Failure -> ResolveUiState.Error(result.reason)
             }
         }
@@ -90,7 +108,7 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
         repository.add(
             DownloadItem(
                 id = id,
-                sourceUrl = url.trim(),
+                sourceUrl = url.trim().ifBlank { media.mediaUrl },
                 mediaUrl = media.mediaUrl,
                 title = media.title,
                 fileName = uniqueFileName(media.fileName),
@@ -106,6 +124,81 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
         if (clearInput) {
             url = ""
             resolveState = ResolveUiState.Idle
+        }
+    }
+
+    // ── Playlist selection ──────────────────────────────────────────────────
+
+    fun togglePlaylistEntry(entryUrl: String) {
+        val state = resolveState as? ResolveUiState.Playlist ?: return
+        val next = state.selectedUrls.toMutableSet()
+        if (!next.remove(entryUrl)) next.add(entryUrl)
+        resolveState = state.copy(selectedUrls = next, lastError = null)
+    }
+
+    fun selectAllPlaylist() {
+        val state = resolveState as? ResolveUiState.Playlist ?: return
+        resolveState = state.copy(
+            selectedUrls = state.playlist.entries.map { it.url }.toSet(),
+            lastError = null,
+        )
+    }
+
+    fun clearPlaylistSelection() {
+        val state = resolveState as? ResolveUiState.Playlist ?: return
+        resolveState = state.copy(selectedUrls = emptySet(), lastError = null)
+    }
+
+    /**
+     * Resolve every selected playlist entry into its best muxed stream and
+     * push it into the download queue. Failures on individual entries are
+     * skipped so one broken video does not block the rest.
+     */
+    fun enqueueSelectedPlaylist() {
+        val state = resolveState as? ResolveUiState.Playlist ?: return
+        val selected = state.playlist.entries.filter { it.url in state.selectedUrls }
+        if (selected.isEmpty()) return
+
+        resolveState = state.copy(
+            enqueueing = true,
+            enqueueProgress = 0,
+            enqueueTotal = selected.size,
+            lastError = null,
+        )
+
+        viewModelScope.launch {
+            var failed = 0
+            selected.forEachIndexed { index, entry ->
+                when (val result = resolver.resolvePlaylistEntry(entry.url)) {
+                    is ResolveResult.Success -> {
+                        // Prefer the first (best) muxed/video candidate.
+                        val media = result.candidates.firstOrNull()
+                        if (media != null) {
+                            enqueue(
+                                media.copy(title = media.title.ifBlank { entry.title }),
+                                clearInput = false,
+                            )
+                        } else {
+                            failed++
+                        }
+                    }
+                    else -> failed++
+                }
+                val current = resolveState as? ResolveUiState.Playlist
+                if (current != null) {
+                    resolveState = current.copy(enqueueProgress = index + 1)
+                }
+            }
+
+            url = ""
+            resolveState = if (failed > 0 && failed == selected.size) {
+                ResolveUiState.Error(
+                    "Could not resolve any of the $failed selected videos. " +
+                        "The site may have changed or the videos are restricted.",
+                )
+            } else {
+                ResolveUiState.Idle
+            }
         }
     }
 
