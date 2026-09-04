@@ -15,33 +15,12 @@ import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import org.schabi.newpipe.extractor.stream.VideoStream
 import java.net.URI
 
-/**
- * Reads the real stream URLs out of sites that sign them per session.
- *
- * This is what the tool could never do on its own. Sites like YouTube do not
- * put a media URL in the page; they hand the player a signed, short-lived one
- * derived by running their own JavaScript. NewPipeExtractor keeps up with that
- * for a long list of services, which is a full-time job and not one worth
- * reimplementing badly.
- *
- * It is GPL-3.0, which is why this application is GPL-3.0.
- *
- * Supports both single streams and playlists. A playlist is returned as a list
- * of entries (title, url, duration, thumbnail) — the actual stream URL for each
- * entry is resolved only when the user decides to download it, so opening a
- * 200-video playlist stays fast.
- *
- * YouTube Mix / Radio links (`list=RD…`) are normalised before extraction:
- * YouTube often refuses those as a standalone playlist page, so we rewrite them
- * to a watch URL with the seed video, and if the mix list still will not load
- * we fall back to that single seed video rather than a cryptic failure.
- */
 object StreamExtractor {
 
     private const val MAX_PLAYLIST_ITEMS = 300
     private const val MAX_PLAYLIST_PAGES = 15
+    private const val MAX_SEARCH_RESULTS = 40
 
-    /** What went wrong, in words worth showing someone. */
     sealed interface Outcome {
         data class Found(
             val candidates: List<ResolvedMedia>,
@@ -70,26 +49,11 @@ object StreamExtractor {
         }
     }
 
-    /**
-     * True when a service in the list claims this link.
-     *
-     * Pattern matching only, no network. The lookup throws rather than
-     * returning null for an unknown host, which is why this is wrapped.
-     */
     fun handles(url: String): Boolean = runCatching {
         ensureInitialised()
         NewPipe.getServiceByUrl(normaliseUrl(url)) != null
     }.getOrDefault(false)
 
-    /**
-     * Everything downloadable behind [url] — a single video, or a whole playlist.
-     *
-     * Muxed streams — video and audio already in one file — come first for
-     * single videos, because they are the only ones that play as a single
-     * downloaded file. Video-only streams are deliberately left out: they are
-     * how the high-resolution options are served, and saving one produces a
-     * file with no sound, which would look like a bug rather than a choice.
-     */
     suspend fun extract(url: String): Outcome = withContext(Dispatchers.IO) {
         runCatching {
             ensureInitialised()
@@ -109,10 +73,6 @@ object StreamExtractor {
         }
     }
 
-    /**
-     * Resolve one playlist entry into downloadable media (best muxed + audio).
-     * Called when the user picks items from a playlist, not when the list opens.
-     */
     suspend fun extractStreamUrl(url: String): Outcome = withContext(Dispatchers.IO) {
         runCatching {
             ensureInitialised()
@@ -127,7 +87,54 @@ object StreamExtractor {
         }
     }
 
-    // ── Single stream ───────────────────────────────────────────────────────
+    /** YouTube text search → playlist-shaped result for the same picker UI. */
+    suspend fun searchYouTube(query: String): Outcome = withContext(Dispatchers.IO) {
+        runCatching {
+            ensureInitialised()
+            val q = query.trim()
+            if (q.isEmpty()) return@runCatching Outcome.Failed("Type something to search.")
+
+            val service = ServiceList.YouTube
+            val extractor = service.getSearchExtractor(q)
+            extractor.fetchPage()
+
+            val entries = mutableListOf<PlaylistEntry>()
+            extractor.initialPage.items
+                .filterIsInstance<StreamInfoItem>()
+                .forEach { item ->
+                    if (entries.size < MAX_SEARCH_RESULTS) entries += item.toEntry()
+                }
+
+            var next = extractor.initialPage.nextPage
+            var pages = 0
+            while (next != null && entries.size < MAX_SEARCH_RESULTS && pages < 2) {
+                val more = extractor.getPage(next)
+                more.items.filterIsInstance<StreamInfoItem>().forEach { item ->
+                    if (entries.size < MAX_SEARCH_RESULTS) entries += item.toEntry()
+                }
+                next = more.nextPage
+                pages++
+            }
+
+            if (entries.isEmpty()) {
+                return@runCatching Outcome.Failed("No YouTube results for \"$q\".")
+            }
+
+            Outcome.Playlist(
+                playlist = ResolvedPlaylist(
+                    url = "ytsearch:$q",
+                    title = "YouTube · $q",
+                    entryCount = entries.size.toLong(),
+                    entries = entries,
+                    serviceName = "YouTube Search",
+                    truncated = entries.size >= MAX_SEARCH_RESULTS,
+                ),
+                serviceName = "YouTube",
+            )
+        }.getOrElse { error ->
+            Outcome.Failed(friendlyMessage(error))
+        }
+    }
 
     private fun extractStream(service: StreamingService, url: String): Outcome {
         val info = StreamInfo.getInfo(service, url)
@@ -181,14 +188,10 @@ object StreamExtractor {
         }
     }
 
-    // ── Playlist ────────────────────────────────────────────────────────────
-
     private fun extractPlaylist(service: StreamingService, url: String): Outcome {
         val mixSeed = youtubeMixSeedVideoId(url)
 
         val info = runCatching { PlaylistInfo.getInfo(service, url) }.getOrElse { error ->
-            // YouTube Mix / Radio pages are often "unviewable" as a standalone
-            // playlist. Fall back to the seed video so the user still gets something.
             if (mixSeed != null) {
                 val seedUrl = "https://www.youtube.com/watch?v=$mixSeed"
                 return when (val seed = extractStream(service, seedUrl)) {
@@ -202,8 +205,7 @@ object StreamExtractor {
                     )
                     else -> Outcome.Failed(
                         "YouTube Mix / Radio playlists cannot be downloaded as a full list. " +
-                            "Open a normal playlist (share → playlist, not Mix) or paste the " +
-                            "individual video link. (${friendlyMessage(error)})",
+                            "Open a normal playlist or paste the individual video link. (${friendlyMessage(error)})",
                     )
                 }
             }
@@ -265,8 +267,6 @@ object StreamExtractor {
         uploader = uploaderName,
     )
 
-    // ── Link kind ───────────────────────────────────────────────────────────
-
     private enum class LinkKind { Stream, Playlist, Other }
 
     private fun linkKind(service: StreamingService, url: String): LinkKind = runCatching {
@@ -284,16 +284,6 @@ object StreamExtractor {
         }
     }.getOrDefault(LinkKind.Other)
 
-    // ── URL normalisation ───────────────────────────────────────────────────
-
-    /**
-     * Make YouTube links something the extractor will accept.
-     *
-     * - youtu.be / m.youtube.com → www.youtube.com
-     * - Strip tracking params (`si`, `feature`, `pp`…)
-     * - Mix / Radio (`list=RD…`) opened as `/playlist?list=RD…` is rewritten to
-     *   `/watch?v={seed}&list=RD{seed}` so NewPipe can resolve it
-     */
     private fun normaliseUrl(raw: String): String {
         val trimmed = raw.trim()
         return runCatching {
@@ -305,7 +295,6 @@ object StreamExtractor {
             val query = parseQuery(uri.rawQuery)
             val path = uri.path.orEmpty()
 
-            // youtu.be/VIDEO → watch?v=
             if (host == "youtu.be") {
                 val id = path.trim('/').substringBefore('?').substringBefore('&')
                 if (id.isNotBlank()) {
@@ -319,7 +308,6 @@ object StreamExtractor {
                     .substringBefore('/')
                     .takeIf { path.contains("/shorts/") && it.isNotBlank() }
 
-            // Mix opened as playlist-only page → watch with seed video
             if (listId != null && isYoutubeMixListId(listId) && videoId.isNullOrBlank()) {
                 val seed = mixSeedFromListId(listId)
                 if (seed != null) {
@@ -327,7 +315,6 @@ object StreamExtractor {
                 }
             }
 
-            // Clean tracking noise on an otherwise fine URL
             if (path.contains("/playlist") && listId != null) {
                 return@runCatching "https://www.youtube.com/playlist?list=$listId"
             }
@@ -338,7 +325,6 @@ object StreamExtractor {
             trimmed
                 .replace("://m.youtube.com", "://www.youtube.com")
                 .replace("://youtube.com", "://www.youtube.com")
-                .replace("://www.youtube.com", "://www.youtube.com")
         }.getOrDefault(trimmed)
     }
 
@@ -349,18 +335,12 @@ object StreamExtractor {
             "https://www.youtube.com/watch?v=$videoId&list=$listId"
         }
 
-    /** RD / RDEM / RDAMVM / … auto-generated mix ids. */
     private fun isYoutubeMixListId(listId: String): Boolean {
         val id = listId.uppercase()
-        return id.startsWith("RD") && !id.startsWith("RDMM") // RDMM is "My Mix" which can work
+        return id.startsWith("RD") && !id.startsWith("RDMM")
     }
 
-    /**
-     * Seed video id embedded in a Mix list id.
-     * Examples: `RD-cGaoFwudDE` → `-cGaoFwudDE`, `RDdQw4w9WgXcQ` → `dQw4w9WgXcQ`
-     */
     private fun mixSeedFromListId(listId: String): String? {
-        // Strip known mix prefixes longest-first
         val prefixes = listOf("RDAMVM", "RDEM", "RDCM", "RDMM", "RD")
         for (prefix in prefixes) {
             if (listId.startsWith(prefix, ignoreCase = true) && listId.length > prefix.length) {
@@ -389,8 +369,6 @@ object StreamExtractor {
             .toMap()
     }
 
-    // ── Helpers ─────────────────────────────────────────────────────────────
-
     private fun resolutionRank(stream: VideoStream): Int {
         val resolution = stream.getResolution().orEmpty()
         val height = resolution.takeWhile { it.isDigit() }.toIntOrNull() ?: 0
@@ -418,7 +396,7 @@ object StreamExtractor {
         return when {
             raw.contains("URL not accepted", ignoreCase = true) ->
                 "That link was not recognised. For YouTube Mix / Radio, paste a normal " +
-                    "playlist link (Share → Playlist) or a single video URL."
+                    "playlist link or a single video URL."
             raw.contains("unviewable", ignoreCase = true) ||
                 raw.contains("ContentNotAvailable", ignoreCase = true) ->
                 "YouTube will not open that playlist for download (common with Mix / Radio). " +
