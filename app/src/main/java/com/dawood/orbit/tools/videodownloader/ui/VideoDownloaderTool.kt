@@ -4,6 +4,7 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,7 @@ import com.dawood.orbit.core.designsystem.component.OrbitButton
 import com.dawood.orbit.core.designsystem.component.OrbitButtonSize
 import com.dawood.orbit.core.designsystem.component.OrbitButtonVariant
 import com.dawood.orbit.core.designsystem.component.OrbitCard
+import com.dawood.orbit.core.designsystem.component.OrbitCheckbox
 import com.dawood.orbit.core.designsystem.component.OrbitEmptyState
 import com.dawood.orbit.core.designsystem.component.OrbitIconButton
 import com.dawood.orbit.core.designsystem.component.OrbitIconTile
@@ -50,17 +52,23 @@ import com.dawood.orbit.tools.shell.ToolShell
 import com.dawood.orbit.tools.shell.ToolStatusLine
 import com.dawood.orbit.tools.shell.ToolWorkspace
 import com.dawood.orbit.tools.videodownloader.model.DownloadItem
-import com.dawood.orbit.tools.videodownloader.resolve.ResolvedMedia
 import com.dawood.orbit.tools.videodownloader.model.DownloadStatus
+import com.dawood.orbit.tools.videodownloader.resolve.PlaylistEntry
+import com.dawood.orbit.tools.videodownloader.resolve.ResolvedMedia
+import com.dawood.orbit.tools.videodownloader.resolve.ResolvedPlaylist
 import com.dawood.orbit.tools.videodownloader.service.DownloadService
 import java.util.Locale
 
 /**
  * Video Downloader — a working tool, not a mock.
  *
- * A link is inspected, the media behind it is found, and the transfer runs in a
- * foreground service that survives leaving the app. Every download can be
- * paused and picked up again from the exact byte it stopped on.
+ * Paste any video or playlist link. The tool finds the media (or the full
+ * playlist), lets you pick what to keep, and runs the transfer in a foreground
+ * service that survives leaving the app. Every download can be paused and
+ * picked up again from the exact byte it stopped on.
+ *
+ * YouTube, SoundCloud, PeerTube, Bandcamp and media.ccc.de go through the
+ * bundled extractor. Other pages are scanned for direct media links.
  */
 @Composable
 fun VideoDownloaderTool(
@@ -79,8 +87,6 @@ fun VideoDownloaderTool(
     val active = downloads.filter { it.isActive }
     val finished = downloads.filter { it.status == DownloadStatus.Completed }
 
-    // Without this the transfer still runs, but the user gets no progress
-    // notification, which on a long download looks like nothing is happening.
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { }
@@ -143,6 +149,14 @@ fun VideoDownloaderTool(
                 style = OrbitTheme.typography.bodySmall,
                 color = OrbitTheme.colors.textSecondary,
             )
+            OrbitText("Playlists", style = OrbitTheme.typography.h4)
+            OrbitText(
+                text = "Paste a YouTube (or other supported) playlist link and pick " +
+                    "which videos to download. Each selected item is resolved to its " +
+                    "best combined video+audio stream before it joins the queue.",
+                style = OrbitTheme.typography.bodySmall,
+                color = OrbitTheme.colors.textSecondary,
+            )
             OrbitText("Resuming", style = OrbitTheme.typography.h4)
             OrbitText(
                 text = "Paused and failed downloads keep their partial file and continue " +
@@ -183,8 +197,8 @@ fun VideoDownloaderTool(
                         OrbitTextField(
                             value = viewModel.url,
                             onValueChange = viewModel::onUrlChange,
-                            label = "Video link",
-                            placeholder = "https://…",
+                            label = "Video or playlist link",
+                            placeholder = "https://…  (video, playlist, or direct file)",
                             leadingIcon = OrbitIcons.Link,
                             trailing = {
                                 OrbitIconButton(
@@ -226,6 +240,15 @@ fun VideoDownloaderTool(
                                 onPreview = { viewModel.preview(it) },
                                 onDismiss = viewModel::dismissResolve,
                             )
+
+                            is ResolveUiState.Playlist -> PlaylistPicker(
+                                state = state,
+                                onToggle = viewModel::togglePlaylistEntry,
+                                onSelectAll = viewModel::selectAllPlaylist,
+                                onClearSelection = viewModel::clearPlaylistSelection,
+                                onDownloadSelected = viewModel::enqueueSelectedPlaylist,
+                                onDismiss = viewModel::dismissResolve,
+                            )
                         }
 
                         Row(
@@ -238,7 +261,8 @@ fun VideoDownloaderTool(
                                 text = "Fetch",
                                 onClick = viewModel::resolve,
                                 leadingIcon = OrbitIcons.Search,
-                                enabled = viewModel.url.isNotBlank(),
+                                enabled = viewModel.url.isNotBlank() &&
+                                    (resolveState as? ResolveUiState.Playlist)?.enqueueing != true,
                                 loading = resolveState is ResolveUiState.Working,
                             )
                         }
@@ -252,8 +276,9 @@ fun VideoDownloaderTool(
                         if (downloads.isEmpty()) {
                             OrbitEmptyState(
                                 title = "Nothing downloading",
-                                description = "Paste a link above and it will appear here with " +
-                                    "progress you can pause and pick back up.",
+                                description = "Paste a video or playlist link above. " +
+                                    "YouTube playlists open as a checklist so you can " +
+                                    "grab the whole set or just the ones you want.",
                                 icon = OrbitIcons.Download,
                                 compact = true,
                             )
@@ -273,19 +298,16 @@ fun VideoDownloaderTool(
                     }
 
                     ToolFooter(
-                        text = "Large files are pulled over several connections at once, which is " +
-                            "what actually uses the available bandwidth — a single stream to a " +
-                            "distant server is usually capped long before your connection is. " +
-                            "Sites that sign their streams per session go through the bundled " +
-                            "extractor; anything behind DRM does not, and never will. Only " +
-                            "download what you have the right to keep.",
+                        text = "YouTube, SoundCloud, PeerTube, Bandcamp and media.ccc.de " +
+                            "use the bundled extractor (including full playlists). Other " +
+                            "sites are scanned for direct media. Large files use several " +
+                            "connections at once. DRM and raw HLS (.m3u8) are not supported. " +
+                            "Only download what you have the right to keep.",
                     )
                 }
             }
         }
 
-        // The player sits above the workspace so it covers the queue while
-        // something is playing, and releases the decoder when dismissed.
         VideoPlayerModal(
             request = viewModel.playing,
             onDismiss = viewModel::stopPlaying,
@@ -293,7 +315,183 @@ fun VideoDownloaderTool(
     }
 }
 
-// ── Pieces ──────────────────────────────────────────────────────────────────
+// ── Playlist picker ─────────────────────────────────────────────────────────
+
+@Composable
+private fun PlaylistPicker(
+    state: ResolveUiState.Playlist,
+    onToggle: (String) -> Unit,
+    onSelectAll: () -> Unit,
+    onClearSelection: () -> Unit,
+    onDownloadSelected: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val playlist = state.playlist
+    val selected = state.selectedUrls.size
+    val total = playlist.entries.size
+
+    Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
+        OrbitCard(color = OrbitTheme.colors.surfaceSunken) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                VideoThumbnail(
+                    thumbnailUrl = playlist.thumbnailUrl,
+                    localPath = null,
+                    size = OrbitTheme.sizes.thumbnail,
+                    contentDescription = null,
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xxs),
+                ) {
+                    OrbitText(
+                        text = playlist.title,
+                        style = OrbitTheme.typography.h4,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    OrbitText(
+                        text = buildString {
+                            append(playlist.serviceName)
+                            playlist.uploader?.takeIf { it.isNotBlank() }?.let {
+                                append(" · "); append(it)
+                            }
+                            append(" · ")
+                            append("${playlist.entryCount} videos")
+                            if (playlist.truncated) append(" (showing first $total)")
+                        },
+                        style = OrbitTheme.typography.caption,
+                        color = OrbitTheme.colors.textMuted,
+                        maxLines = 2,
+                    )
+                }
+                OrbitIconButton(
+                    icon = OrbitIcons.Close,
+                    contentDescription = "Dismiss",
+                    onClick = onDismiss,
+                    size = OrbitButtonSize.Small,
+                    enabled = !state.enqueueing,
+                )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = OrbitTheme.spacing.md),
+                horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OrbitBadge(
+                    text = "$selected of $total selected",
+                    tone = if (selected > 0) OrbitTone.Accent else OrbitTone.Neutral,
+                    showDot = true,
+                )
+                Box(Modifier.weight(1f))
+                OrbitButton(
+                    text = "All",
+                    onClick = onSelectAll,
+                    variant = OrbitButtonVariant.Ghost,
+                    size = OrbitButtonSize.Small,
+                    enabled = !state.enqueueing,
+                )
+                OrbitButton(
+                    text = "None",
+                    onClick = onClearSelection,
+                    variant = OrbitButtonVariant.Ghost,
+                    size = OrbitButtonSize.Small,
+                    enabled = !state.enqueueing,
+                )
+                OrbitButton(
+                    text = if (state.enqueueing) {
+                        "Adding ${state.enqueueProgress}/${state.enqueueTotal}…"
+                    } else {
+                        "Download selected"
+                    },
+                    onClick = onDownloadSelected,
+                    leadingIcon = OrbitIcons.Download,
+                    enabled = selected > 0 && !state.enqueueing,
+                    loading = state.enqueueing,
+                )
+            }
+
+            if (state.enqueueing && state.enqueueTotal > 0) {
+                OrbitProgressBar(
+                    progress = state.enqueueProgress.toFloat() / state.enqueueTotal,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = OrbitTheme.spacing.sm),
+                )
+            }
+        }
+
+        playlist.entries.forEach { entry ->
+            PlaylistEntryRow(
+                entry = entry,
+                selected = entry.url in state.selectedUrls,
+                enabled = !state.enqueueing,
+                onToggle = { onToggle(entry.url) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlaylistEntryRow(
+    entry: PlaylistEntry,
+    selected: Boolean,
+    enabled: Boolean,
+    onToggle: () -> Unit,
+) {
+    OrbitCard(color = OrbitTheme.colors.surface) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = enabled, onClick = onToggle),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+        ) {
+            OrbitCheckbox(
+                checked = selected,
+                onCheckedChange = if (enabled) { { onToggle() } } else null,
+                enabled = enabled,
+            )
+            VideoThumbnail(
+                thumbnailUrl = entry.thumbnailUrl,
+                localPath = null,
+                size = OrbitTheme.sizes.thumbnail,
+                contentDescription = null,
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xxs),
+            ) {
+                OrbitText(
+                    text = entry.title,
+                    style = OrbitTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                OrbitText(
+                    text = buildString {
+                        entry.uploader?.takeIf { it.isNotBlank() }?.let { append(it) }
+                        entry.durationSeconds?.let { seconds ->
+                            if (isNotEmpty()) append(" · ")
+                            append(formatDuration(seconds))
+                        }
+                    }.ifBlank { "Video" },
+                    style = OrbitTheme.typography.caption,
+                    color = OrbitTheme.colors.textMuted,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+// ── Single / multi candidates ───────────────────────────────────────────────
 
 @Composable
 private fun ResolvedCard(
@@ -326,9 +524,11 @@ private fun ResolvedCard(
                 )
                 OrbitText(
                     text = buildString {
+                        media.qualityLabel?.let { append(it); append(" · ") }
                         append(media.mimeType)
                         if (media.sizeBytes > 0) append(" · ${formatBytes(media.sizeBytes)}")
                         if (!media.resumable) append(" · no resume")
+                        media.serviceName?.let { append(" · "); append(it) }
                     },
                     style = OrbitTheme.typography.caption,
                     color = OrbitTheme.colors.textMuted,
@@ -371,13 +571,6 @@ private fun ResolvedCard(
     }
 }
 
-/**
- * Everything the pasted link turned out to hold.
- *
- * A page usually carries more than one video, so the tool shows the lot and
- * lets the user pick rather than guessing which one they meant. Each can be
- * previewed before committing to the download.
- */
 @Composable
 private fun ResolvedCandidates(
     candidates: List<ResolvedMedia>,
@@ -394,7 +587,7 @@ private fun ResolvedCandidates(
                 horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
             ) {
                 OrbitText(
-                    text = "${candidates.size} files on that page",
+                    text = "${candidates.size} streams available",
                     style = OrbitTheme.typography.h4,
                     modifier = Modifier.weight(1f),
                 )
@@ -455,8 +648,6 @@ private fun DownloadRow(
                 )
             } else {
                 VideoThumbnail(
-                    // A finished file can have a frame pulled out of it even
-                    // when the page never offered a poster.
                     thumbnailUrl = item.thumbnailUrl,
                     localPath = item.partPath.takeIf { item.status == DownloadStatus.Completed },
                     size = OrbitTheme.sizes.thumbnail,
@@ -480,7 +671,6 @@ private fun DownloadRow(
                     maxLines = 1,
                 )
             }
-            // Watch it now, without waiting for the download to finish.
             OrbitIconButton(
                 icon = OrbitIcons.Video,
                 contentDescription = if (item.status == DownloadStatus.Completed) {
@@ -494,19 +684,44 @@ private fun DownloadRow(
 
             when (item.status) {
                 DownloadStatus.Running, DownloadStatus.Queued, DownloadStatus.Resolving ->
-                    OrbitIconButton(OrbitIcons.Pause, "Pause", onPause, size = OrbitButtonSize.Small)
+                    OrbitIconButton(
+                        icon = OrbitIcons.Pause,
+                        contentDescription = "Pause",
+                        onClick = onPause,
+                        size = OrbitButtonSize.Small,
+                    )
 
                 DownloadStatus.Paused ->
-                    OrbitIconButton(OrbitIcons.Play, "Resume", onResume, size = OrbitButtonSize.Small)
+                    OrbitIconButton(
+                        icon = OrbitIcons.Play,
+                        contentDescription = "Resume",
+                        onClick = onResume,
+                        size = OrbitButtonSize.Small,
+                    )
 
                 DownloadStatus.Failed ->
-                    OrbitIconButton(OrbitIcons.Refresh, "Retry", onRetry, size = OrbitButtonSize.Small)
+                    OrbitIconButton(
+                        icon = OrbitIcons.Refresh,
+                        contentDescription = "Retry",
+                        onClick = onRetry,
+                        size = OrbitButtonSize.Small,
+                    )
 
                 DownloadStatus.Completed ->
-                    OrbitIconButton(OrbitIcons.Close, "Remove from list", onRemove, size = OrbitButtonSize.Small)
+                    OrbitIconButton(
+                        icon = OrbitIcons.Close,
+                        contentDescription = "Remove from list",
+                        onClick = onRemove,
+                        size = OrbitButtonSize.Small,
+                    )
             }
             if (item.status != DownloadStatus.Completed) {
-                OrbitIconButton(OrbitIcons.Delete, "Cancel and delete", onCancel, size = OrbitButtonSize.Small)
+                OrbitIconButton(
+                    icon = OrbitIcons.Delete,
+                    contentDescription = "Cancel and delete",
+                    onClick = onCancel,
+                    size = OrbitButtonSize.Small,
+                )
             }
         }
 
@@ -610,4 +825,15 @@ private fun formatEta(seconds: Long): String = when {
     seconds < 60 -> "${seconds}s"
     seconds < 3600 -> "${seconds / 60}m ${seconds % 60}s"
     else -> "${seconds / 3600}h ${(seconds % 3600) / 60}m"
+}
+
+private fun formatDuration(seconds: Long): String {
+    val h = seconds / 3600
+    val m = (seconds % 3600) / 60
+    val s = seconds % 60
+    return if (h > 0) {
+        String.format(Locale.US, "%d:%02d:%02d", h, m, s)
+    } else {
+        String.format(Locale.US, "%d:%02d", m, s)
+    }
 }
