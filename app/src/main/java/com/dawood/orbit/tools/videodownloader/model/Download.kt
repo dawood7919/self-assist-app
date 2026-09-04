@@ -13,7 +13,7 @@ import androidx.compose.runtime.Immutable
 @Immutable
 data class DownloadItem(
     val id: String,
-    /** What the user pasted. Kept so a failed resolve can be retried. */
+    /** What the user pasted (or the playlist entry page). Used to refresh signed URLs. */
     val sourceUrl: String,
     /** The actual media URL that bytes are pulled from. */
     val mediaUrl: String,
@@ -45,6 +45,11 @@ data class DownloadItem(
     /** Poster image from the source page, when there was one. */
     val thumbnailUrl: String? = null,
     val speedBytesPerSecond: Long = 0L,
+    /** When set, this row belongs to a playlist batch shown as one block in the queue. */
+    val playlistGroupId: String? = null,
+    val playlistTitle: String? = null,
+    /** e.g. "720p" — used to re-pick the same quality after a signed URL refresh. */
+    val qualityLabel: String? = null,
 ) {
     /** True while the file is being pulled over several connections at once. */
     val isSegmented: Boolean get() = segments.size > 1
