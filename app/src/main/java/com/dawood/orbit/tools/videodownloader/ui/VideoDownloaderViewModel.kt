@@ -9,8 +9,8 @@ import androidx.lifecycle.viewModelScope
 import com.dawood.orbit.tools.videodownloader.data.DownloadRepository
 import com.dawood.orbit.tools.videodownloader.model.DownloadItem
 import com.dawood.orbit.tools.videodownloader.model.DownloadStatus
+import com.dawood.orbit.tools.videodownloader.model.QualityPreference
 import com.dawood.orbit.tools.videodownloader.resolve.MediaResolver
-import com.dawood.orbit.tools.videodownloader.resolve.PlaylistEntry
 import com.dawood.orbit.tools.videodownloader.resolve.ResolveResult
 import com.dawood.orbit.tools.videodownloader.resolve.ResolvedMedia
 import com.dawood.orbit.tools.videodownloader.resolve.ResolvedPlaylist
@@ -20,31 +20,23 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
 
-/** What the in-app player should open. */
 data class PlaybackRequest(
     val title: String,
     val url: String,
-    /** Set only for a finished file, which can be played from disk. */
     val localPath: String?,
-    /** True when the bytes are coming over the network rather than off disk. */
     val streaming: Boolean,
 )
 
-/** What the "paste a link" area is currently showing. */
 sealed interface ResolveUiState {
     data object Idle : ResolveUiState
     data object Working : ResolveUiState
 
-    /** One or more downloadable files were found on the pasted link. */
     data class Ready(val candidates: List<ResolvedMedia>) : ResolveUiState
 
-    /**
-     * A playlist. [selectedUrls] are the entry URLs the user has ticked.
-     * [enqueueing] is true while selected items are being resolved into the queue.
-     */
     data class Playlist(
         val playlist: ResolvedPlaylist,
         val selectedUrls: Set<String> = playlist.entries.map { it.url }.toSet(),
+        val quality: QualityPreference = QualityPreference.Best,
         val enqueueing: Boolean = false,
         val enqueueProgress: Int = 0,
         val enqueueTotal: Int = 0,
@@ -54,10 +46,6 @@ sealed interface ResolveUiState {
     data class Error(val message: String) : ResolveUiState
 }
 
-/**
- * Holds the screen's own state — the link being inspected — and forwards
- * everything else to the repository and the download service.
- */
 class VideoDownloaderViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = DownloadRepository.get(application)
@@ -69,6 +57,10 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
         private set
 
     var resolveState by mutableStateOf<ResolveUiState>(ResolveUiState.Idle)
+        private set
+
+    /** Which playlist group card is expanded in the queue, if any. */
+    var expandedPlaylistGroupId by mutableStateOf<String?>(null)
         private set
 
     fun onUrlChange(value: String) {
@@ -89,15 +81,19 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
         }
     }
 
-    /** Adds every file found on the page, for when the user wants the lot. */
     fun enqueueAll(candidates: List<ResolvedMedia>) {
         candidates.forEach { enqueue(it, clearInput = false) }
         url = ""
         resolveState = ResolveUiState.Idle
     }
 
-    /** Adds the resolved media to the queue and starts it immediately. */
-    fun enqueue(media: ResolvedMedia, clearInput: Boolean = true) {
+    fun enqueue(
+        media: ResolvedMedia,
+        clearInput: Boolean = true,
+        sourceUrlOverride: String? = null,
+        playlistGroupId: String? = null,
+        playlistTitle: String? = null,
+    ) {
         val context = getApplication<Application>()
         val id = UUID.randomUUID().toString()
         val directory = File(
@@ -108,7 +104,8 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
         repository.add(
             DownloadItem(
                 id = id,
-                sourceUrl = url.trim().ifBlank { media.mediaUrl },
+                sourceUrl = sourceUrlOverride
+                    ?: url.trim().ifBlank { media.mediaUrl },
                 mediaUrl = media.mediaUrl,
                 title = media.title,
                 fileName = uniqueFileName(media.fileName),
@@ -117,6 +114,9 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
                 totalBytes = media.sizeBytes,
                 resumable = media.resumable,
                 thumbnailUrl = media.thumbnailUrl,
+                playlistGroupId = playlistGroupId,
+                playlistTitle = playlistTitle,
+                qualityLabel = media.qualityLabel,
             ),
         )
         DownloadController.start(context, id)
@@ -126,8 +126,6 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
             resolveState = ResolveUiState.Idle
         }
     }
-
-    // ── Playlist selection ──────────────────────────────────────────────────
 
     fun togglePlaylistEntry(entryUrl: String) {
         val state = resolveState as? ResolveUiState.Playlist ?: return
@@ -149,15 +147,19 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
         resolveState = state.copy(selectedUrls = emptySet(), lastError = null)
     }
 
-    /**
-     * Resolve every selected playlist entry into its best muxed stream and
-     * push it into the download queue. Failures on individual entries are
-     * skipped so one broken video does not block the rest.
-     */
+    fun setPlaylistQuality(quality: QualityPreference) {
+        val state = resolveState as? ResolveUiState.Playlist ?: return
+        resolveState = state.copy(quality = quality, lastError = null)
+    }
+
     fun enqueueSelectedPlaylist() {
         val state = resolveState as? ResolveUiState.Playlist ?: return
         val selected = state.playlist.entries.filter { it.url in state.selectedUrls }
         if (selected.isEmpty()) return
+
+        val groupId = UUID.randomUUID().toString()
+        val groupTitle = state.playlist.title
+        val preference = state.quality
 
         resolveState = state.copy(
             enqueueing = true,
@@ -171,12 +173,14 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
             selected.forEachIndexed { index, entry ->
                 when (val result = resolver.resolvePlaylistEntry(entry.url)) {
                     is ResolveResult.Success -> {
-                        // Prefer the first (best) muxed/video candidate.
-                        val media = result.candidates.firstOrNull()
+                        val media = QualityPreference.pick(result.candidates, preference)
                         if (media != null) {
                             enqueue(
-                                media.copy(title = media.title.ifBlank { entry.title }),
+                                media = media.copy(title = media.title.ifBlank { entry.title }),
                                 clearInput = false,
+                                sourceUrlOverride = entry.url,
+                                playlistGroupId = groupId,
+                                playlistTitle = groupTitle,
                             )
                         } else {
                             failed++
@@ -191,6 +195,7 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
             }
 
             url = ""
+            expandedPlaylistGroupId = groupId
             resolveState = if (failed > 0 && failed == selected.size) {
                 ResolveUiState.Error(
                     "Could not resolve any of the $failed selected videos. " +
@@ -202,13 +207,26 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
         }
     }
 
-    /**
-     * What the built-in player is showing, or null when it is closed.
-     *
-     * A running download is played from its source URL rather than from the
-     * partial file: the bytes on disk are being written out of order by the
-     * segmented transfer, so the file is not playable until it is finished.
-     */
+    fun togglePlaylistGroup(groupId: String) {
+        expandedPlaylistGroupId =
+            if (expandedPlaylistGroupId == groupId) null else groupId
+    }
+
+    fun pauseGroup(groupId: String) {
+        downloads.value
+            .filter { it.playlistGroupId == groupId && it.isActive }
+            .forEach { pause(it.id) }
+    }
+
+    fun resumeGroup(groupId: String) {
+        downloads.value
+            .filter {
+                it.playlistGroupId == groupId &&
+                    (it.status == DownloadStatus.Paused || it.status == DownloadStatus.Failed)
+            }
+            .forEach { resume(it.id) }
+    }
+
     var playing by mutableStateOf<PlaybackRequest?>(null)
         private set
 
@@ -230,7 +248,6 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
         }
     }
 
-    /** Plays a candidate before deciding whether it is worth downloading. */
     fun preview(media: ResolvedMedia) {
         playing = PlaybackRequest(
             title = media.title,
@@ -260,7 +277,6 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
         resolveState = ResolveUiState.Idle
     }
 
-    /** Keeps two downloads of the same video from overwriting each other. */
     private fun uniqueFileName(name: String): String {
         val taken = downloads.value.map { it.fileName }.toSet()
         if (name !in taken) return name
