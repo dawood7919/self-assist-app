@@ -46,9 +46,7 @@ sealed interface ResolveUiState {
         val enqueueProgress: Int = 0,
         val enqueueTotal: Int = 0,
         val lastError: String? = null,
-        /** Filter text applied to entry titles (phase 3). */
         val filter: String = "",
-        /** Minimum duration seconds filter; 0 = off. */
         val minDurationSec: Long = 0L,
     ) : ResolveUiState {
         val visibleEntries: List<PlaylistEntry>
@@ -94,7 +92,6 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
     var playing by mutableStateOf<PlaybackRequest?>(null)
         private set
 
-    /** Fullscreen dialog vs mini bar while audio/video keeps going. */
     var playerExpanded by mutableStateOf(false)
         private set
 
@@ -103,7 +100,7 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
         if (resolveState !is ResolveUiState.Idle) resolveState = ResolveUiState.Idle
     }
 
-    fun setSearchMode(enabled: Boolean) {
+    fun useSearchMode(enabled: Boolean) {
         searchMode = enabled
         resolveState = ResolveUiState.Idle
     }
@@ -198,8 +195,6 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
 
     fun enqueueAll(candidates: List<ResolvedMedia>) {
         candidates.forEach { enqueue(it, clearInput = false) }
-        // Keep list? User asked to keep list while playing, but after download
-        // clearing is fine. Leave candidates visible.
     }
 
     fun enqueue(
@@ -244,7 +239,6 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
 
         if (clearInput) {
             url = ""
-            // Do not clear resolveState so the list stays if user is browsing
         }
     }
 
@@ -339,7 +333,6 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
         }
     }
 
-    /** Play a playlist entry without leaving the list. */
     fun playPlaylistEntry(entry: PlaylistEntry) {
         viewModelScope.launch {
             when (val result = resolver.resolvePlaylistEntry(entry.url)) {
@@ -353,10 +346,6 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
                         qualities = result.candidates,
                     )
                     playerExpanded = true
-                }
-                is ResolveResult.Failure -> {
-                    // surface as transient: keep list, show error state briefly not ideal;
-                    // leave list intact
                 }
                 else -> Unit
             }
@@ -413,7 +402,6 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
         playerExpanded = true
     }
 
-    /** Leave fullscreen but keep audio/video going (mini player). */
     fun minimizePlayer() {
         playerExpanded = false
     }
