@@ -19,7 +19,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dawood.orbit.core.designsystem.component.OrbitButton
@@ -124,17 +123,16 @@ fun VideoDownloaderTool(
                 style = OrbitTheme.typography.bodySmall,
                 color = OrbitTheme.colors.textSecondary,
             )
-            OrbitText("Playlists", style = OrbitTheme.typography.h4)
+            OrbitText("Pages & playlists", style = OrbitTheme.typography.h4)
             OrbitText(
-                text = "Paste a playlist link, pick quality for all, then select videos. " +
-                    "The queue shows the playlist as one block you can expand.",
+                text = "Paste a playlist, a network listing, or a single video page. " +
+                    "Listing pages open as a checklist of videos you can download or play.",
                 style = OrbitTheme.typography.bodySmall,
                 color = OrbitTheme.colors.textSecondary,
             )
-            OrbitText("Resuming", style = OrbitTheme.typography.h4)
+            OrbitText("Player", style = OrbitTheme.typography.h4)
             OrbitText(
-                text = "Paused downloads keep the partial file. On resume, signed URLs " +
-                    "(YouTube etc.) are refreshed so the transfer continues from the same byte.",
+                text = "Fullscreen landscape player with play/pause, seek, and quality switch.",
                 style = OrbitTheme.typography.bodySmall,
                 color = OrbitTheme.colors.textSecondary,
             )
@@ -170,8 +168,8 @@ fun VideoDownloaderTool(
                         OrbitTextField(
                             value = viewModel.url,
                             onValueChange = viewModel::onUrlChange,
-                            label = "Video or playlist link",
-                            placeholder = "https://…  (video, playlist, or direct file)",
+                            label = "Video, playlist, or page link",
+                            placeholder = "https://…",
                             leadingIcon = OrbitIcons.Link,
                             trailing = {
                                 OrbitIconButton(
@@ -210,7 +208,7 @@ fun VideoDownloaderTool(
                                 candidates = state.candidates,
                                 onDownload = { viewModel.enqueue(it) },
                                 onDownloadAll = { viewModel.enqueueAll(state.candidates) },
-                                onPreview = { viewModel.preview(it) },
+                                onPreview = { viewModel.preview(it, state.candidates) },
                                 onDismiss = viewModel::dismissResolve,
                             )
 
@@ -250,8 +248,7 @@ fun VideoDownloaderTool(
                         if (downloads.isEmpty()) {
                             OrbitEmptyState(
                                 title = "Nothing downloading",
-                                description = "Paste a video or playlist link above. " +
-                                    "Playlists appear as one block in the queue.",
+                                description = "Paste a video, playlist, or site listing above.",
                                 icon = OrbitIcons.Download,
                                 compact = true,
                             )
@@ -273,10 +270,9 @@ fun VideoDownloaderTool(
                     }
 
                     ToolFooter(
-                        text = "YouTube, SoundCloud, PeerTube, Bandcamp and media.ccc.de " +
-                            "use the bundled extractor (including full playlists). " +
-                            "On resume, signed URLs are refreshed so downloads continue " +
-                            "from the partial file. DRM and raw HLS are not supported.",
+                        text = "YouTube and similar hosts use the bundled extractor. " +
+                            "Other pages are scanned for media and video links. " +
+                            "DRM and raw HLS are not supported.",
                     )
                 }
             }
