@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -75,12 +76,6 @@ import java.util.concurrent.TimeUnit
 private const val SEEK_MS = 10_000L
 private const val SEEK_LONG_MS = 30_000L
 
-/**
- * Fullscreen player + optional mini bar.
- *
- * Scrubber supports tap and drag. Closing fullscreen minimizes to the mini
- * bar so playback continues while the user browses the list (in-app background).
- */
 @OptIn(UnstableApi::class)
 @Composable
 fun VideoPlayerModal(
@@ -131,7 +126,7 @@ fun VideoPlayerModal(
             .setMediaSourceFactory(DefaultMediaSourceFactory(httpFactory))
             .setSeekBackIncrementMs(SEEK_LONG_MS)
             .setSeekForwardIncrementMs(SEEK_LONG_MS)
-            .setAudioAttributes(audioAttrs, /* handleAudioFocus = */ true)
+            .setAudioAttributes(audioAttrs, true)
             .build()
             .apply {
                 val uri = request.localPath ?: selectedQuality.mediaUrl
@@ -319,27 +314,16 @@ fun VideoPlayerModal(
                         tint = Color.White,
                     )
                     OrbitIconButton(
-                        icon = OrbitIcons.Replay30,
-                        contentDescription = "Back 10s",
-                        onClick = {
-                            player.seekTo((player.currentPosition - SEEK_MS).coerceAtLeast(0))
-                        },
-                        tint = Color.White,
-                    )
-                    OrbitIconButton(
-                        icon = if (isPlaying) OrbitIcons.Pause else OrbitIcons.Play,
+                        icon = OrbitIcons.Play,
                         contentDescription = if (isPlaying) "Pause" else "Play",
                         onClick = { if (player.isPlaying) player.pause() else player.play() },
                         tint = Color.White,
                     )
+                    // Use Pause icon when playing — icon swap
                     OrbitIconButton(
-                        icon = OrbitIcons.Forward30,
-                        contentDescription = "Forward 10s",
-                        onClick = {
-                            val d = player.duration
-                            val t = player.currentPosition + SEEK_MS
-                            player.seekTo(if (d > 0) t.coerceAtMost(d) else t)
-                        },
+                        icon = if (isPlaying) OrbitIcons.Pause else OrbitIcons.Play,
+                        contentDescription = if (isPlaying) "Pause" else "Play",
+                        onClick = { if (player.isPlaying) player.pause() else player.play() },
                         tint = Color.White,
                     )
                     OrbitIconButton(
@@ -369,6 +353,7 @@ fun VideoPlayerModal(
                         positionMs = positionMs,
                         durationMs = durationMs,
                         onSeekFraction = ::seekToFraction,
+                        light = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -389,11 +374,7 @@ fun VideoPlayerModal(
                             OrbitButton(
                                 text = if (selected) "● $label" else label,
                                 onClick = { switchQuality(q) },
-                                variant = if (selected) {
-                                    OrbitButtonVariant.Primary
-                                } else {
-                                    OrbitButtonVariant.Ghost
-                                },
+                                variant = if (selected) OrbitButtonVariant.Primary else OrbitButtonVariant.Ghost,
                                 size = OrbitButtonSize.Small,
                             )
                         }
@@ -421,8 +402,11 @@ private fun SeekBar(
     durationMs: Long,
     onSeekFraction: (Float) -> Unit,
     modifier: Modifier = Modifier,
+    light: Boolean = false,
 ) {
-    var barWidthPx by remember { mutableFloatStateOf(1f) }
+    val track = if (light) Color.White.copy(alpha = 0.3f) else OrbitTheme.colors.border
+    val fill = if (light) Color.White else OrbitTheme.colors.accent
+    val textColor = if (light) Color.White else OrbitTheme.colors.textSecondary
     val progress = if (durationMs > 0) {
         (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
     } else {
@@ -437,13 +421,12 @@ private fun SeekBar(
         OrbitText(
             text = formatPlayerTime(positionMs),
             style = OrbitTheme.typography.caption,
-            color = Color.White,
+            color = textColor,
         )
         Box(
             modifier = Modifier
                 .weight(1f)
                 .height(OrbitTheme.spacing.lg)
-                .onSizeChanged { barWidthPx = it.width.toFloat().coerceAtLeast(1f) }
                 .pointerInput(durationMs) {
                     detectTapGestures { offset ->
                         onSeekFraction(offset.x / size.width.toFloat())
@@ -460,32 +443,30 @@ private fun SeekBar(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(OrbitTheme.spacing.xxs)
-                    .background(Color.White.copy(alpha = 0.3f)),
+                    .height(OrbitTheme.sizes.hairline * 3)
+                    .background(track),
             )
             Box(
                 modifier = Modifier
                     .fillMaxWidth(progress)
-                    .height(OrbitTheme.spacing.xxs)
-                    .background(Color.White),
+                    .height(OrbitTheme.sizes.hairline * 3)
+                    .background(fill),
             )
             Box(
-                modifier = Modifier
-                    .padding(start = OrbitTheme.spacing.none) // thumb visual via end of progress
-                    .fillMaxWidth(progress),
+                modifier = Modifier.fillMaxWidth(progress),
                 contentAlignment = Alignment.CenterEnd,
             ) {
                 Box(
                     modifier = Modifier
                         .size(OrbitTheme.spacing.md)
-                        .background(Color.White, shape = OrbitTheme.radius.shapeFull),
+                        .background(fill, shape = CircleShape),
                 )
             }
         }
         OrbitText(
             text = if (durationMs > 0) formatPlayerTime(durationMs) else "--:--",
             style = OrbitTheme.typography.caption,
-            color = Color.White,
+            color = textColor,
         )
     }
 }
@@ -502,7 +483,7 @@ private fun MiniPlayerBar(
     onSeekFraction: (Float) -> Unit,
 ) {
     OrbitCard(
-        color = OrbitTheme.colors.surfaceRaised,
+        color = OrbitTheme.colors.surfaceElevated,
         modifier = Modifier
             .fillMaxWidth()
             .padding(OrbitTheme.spacing.md),
@@ -543,6 +524,7 @@ private fun MiniPlayerBar(
                 positionMs = positionMs,
                 durationMs = durationMs,
                 onSeekFraction = onSeekFraction,
+                light = false,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
