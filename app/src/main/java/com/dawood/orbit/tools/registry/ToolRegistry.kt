@@ -238,10 +238,13 @@ object ToolRegistry {
         Tool(
             id = Ids.VIDEO_DOWNLOADER,
             name = "Video Downloader",
-            description = "Save a video for offline viewing",
+            description = "Download any video or YouTube playlist — multi-site, resumable",
             icon = OrbitIcons.Video,
             categoryId = Categories.MEDIA,
-            tags = listOf("video", "download", "offline", "media"),
+            tags = listOf(
+                "video", "download", "offline", "media", "youtube",
+                "playlist", "soundcloud", "peertube", "batch",
+            ),
             hasWorkspace = true,
         ),
         Tool(
