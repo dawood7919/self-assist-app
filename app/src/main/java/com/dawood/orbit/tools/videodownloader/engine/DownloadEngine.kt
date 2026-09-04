@@ -31,19 +31,13 @@ import java.util.concurrent.atomic.AtomicLongArray
  *
  *  - **Segmented.** When the server honours byte ranges and reports a length,
  *    the file is split across several connections that each write straight to
- *    their own offset in one pre-allocated file. This is what actually uses
- *    the available bandwidth: a single TCP stream to a distant CDN is usually
- *    limited by round-trip latency and per-connection shaping long before it
- *    is limited by the phone's link.
+ *    their own offset in one pre-allocated file.
  *  - **Single stream.** Everything else — no length, or no range support —
  *    falls back to one sequential connection.
  *
- * Resuming works in both shapes. Segmented resume replays each unfinished
- * range from `start + completed`; single-stream resume uses the length of the
- * partial file. Either way the file's own validator (`ETag`, else
- * `Last-Modified`) goes out as `If-Range`, so a file that changed on the
- * server restarts cleanly instead of being stitched together from two
- * different versions.
+ * Resuming works in both shapes. Before any bytes move, [StreamUrlRefresher]
+ * renews signed CDN URLs (YouTube etc.) so a pause does not force a restart
+ * from byte zero when the old URL has expired.
  */
 internal class DownloadEngine(
     private val context: Context,
@@ -58,7 +52,8 @@ internal class DownloadEngine(
      * partial file stays on disk, and the caller records [DownloadStatus.Paused].
      */
     suspend fun run(id: String) = withContext(Dispatchers.IO) {
-        val item = repository.get(id) ?: return@withContext
+        var item = repository.get(id) ?: return@withContext
+        item = StreamUrlRefresher.refresh(repository, item)
         val partFile = File(item.partPath)
         partFile.parentFile?.mkdirs()
 
@@ -70,7 +65,6 @@ internal class DownloadEngine(
                 runSingleStream(id, item, partFile)
             }
         } catch (cancelled: CancellationException) {
-            // Pause or shutdown. The partial file is intentionally left alone.
             throw cancelled
         } catch (error: IOException) {
             fail(id, error.message ?: "The connection dropped.")
@@ -78,8 +72,6 @@ internal class DownloadEngine(
             fail(id, error.message ?: "The download failed unexpectedly.")
         }
     }
-
-    // ── Deciding the shape ──────────────────────────────────────────────────
 
     private data class Head(
         val totalBytes: Long,
@@ -91,11 +83,6 @@ internal class DownloadEngine(
             get() = acceptsRanges && totalBytes >= SegmentPlan.MIN_SEGMENTED_BYTES
     }
 
-    /**
-     * A one-byte ranged GET. It answers the only two questions that decide the
-     * shape of the transfer — how big is it, and will you serve ranges — while
-     * pulling a single byte.
-     */
     private fun probeForPlan(item: DownloadItem): Head? = runCatching {
         val request = baseRequest(item)
             .header("Range", "bytes=0-0")
@@ -119,23 +106,17 @@ internal class DownloadEngine(
         }
     }.getOrNull()
 
-    // ── Segmented transfer ──────────────────────────────────────────────────
-
     private suspend fun runSegmented(
         id: String,
         item: DownloadItem,
         partFile: File,
         head: Head,
     ) {
-        // A saved plan is reused only if it still describes this exact file,
-        // and only if the validator has not changed underneath it.
         val validatorChanged = head.etag != null && item.etag != null && head.etag != item.etag
         val savedPlan = if (validatorChanged) emptyList() else item.segments
         val plan = SegmentPlan.restoreOrPlan(savedPlan, head.totalBytes)
 
         if (validatorChanged || !partFile.exists() || partFile.length() != head.totalBytes) {
-            // Pre-allocating means every connection can seek straight to its
-            // own offset, and the file never has to be stitched together.
             allocate(partFile, head.totalBytes, keepContents = !validatorChanged && partFile.exists())
         }
 
@@ -161,18 +142,11 @@ internal class DownloadEngine(
         }
 
         coroutineScope {
-            // The reporter is a separate coroutine so a slow segment cannot
-            // hold up progress reporting for the others. It loops forever, so
-            // it is cancelled explicitly once the transfers have joined —
-            // otherwise this scope would never return.
             val reporter = launch { reportProgress(id, plan, progress, head.totalBytes) }
             try {
                 plan.mapIndexedNotNull { index, segment ->
-                    if (segment.isDone) {
-                        null
-                    } else {
-                        launch { transferSegment(item, partFile, segment, index, progress) }
-                    }
+                    if (segment.isDone) null
+                    else launch { transferSegment(item, partFile, segment, index, progress) }
                 }.joinAll()
             } finally {
                 reporter.cancel()
@@ -192,7 +166,6 @@ internal class DownloadEngine(
         }
     }
 
-    /** Pulls one byte range into its own slice of the file. */
     private suspend fun transferSegment(
         item: DownloadItem,
         partFile: File,
@@ -214,9 +187,6 @@ internal class DownloadEngine(
 
             try {
                 client.newCall(request).execute().use { response ->
-                    // Anything but 206 means the server ignored the range and is
-                    // about to send the whole file down this one connection,
-                    // which would corrupt the slice. Abandoning is correct.
                     if (response.code != 206) {
                         throw IOException("The server stopped honouring byte ranges (HTTP ${response.code}).")
                     }
@@ -242,8 +212,6 @@ internal class DownloadEngine(
                     }
                 }
                 if (completed >= segment.length) return
-                // The connection ended early — a CDN capping a response, or a
-                // dropped socket. Reconnect from where it stopped.
                 attempt++
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -258,7 +226,6 @@ internal class DownloadEngine(
         }
     }
 
-    /** Publishes combined progress and speed on a fixed cadence. */
     private suspend fun reportProgress(
         id: String,
         plan: List<Segment>,
@@ -285,17 +252,10 @@ internal class DownloadEngine(
         }
     }
 
-    /**
-     * Creates the file at its final size so every connection can seek into it.
-     * [keepContents] preserves whatever is already there, which is what makes a
-     * resume pick up mid-file rather than starting over.
-     */
     private fun allocate(partFile: File, totalBytes: Long, keepContents: Boolean) {
         if (!keepContents) partFile.delete()
         RandomAccessFile(partFile, "rw").use { it.setLength(totalBytes) }
     }
-
-    // ── Single stream fallback ──────────────────────────────────────────────
 
     private suspend fun runSingleStream(id: String, item: DownloadItem, partFile: File) {
         val alreadyOnDisk = if (partFile.exists()) partFile.length() else 0L
@@ -391,8 +351,6 @@ internal class DownloadEngine(
         source.use { input ->
             FileOutputStream(partFile, append).use { output ->
                 while (true) {
-                    // Cancellation is checked every chunk so pausing feels
-                    // immediate rather than waiting for the response to end.
                     currentCoroutineContext().ensureActive()
 
                     val read = input.read(buffer)
@@ -418,8 +376,6 @@ internal class DownloadEngine(
         publish(id, written, totalBytes, 0L)
     }
 
-    // ── Shared ──────────────────────────────────────────────────────────────
-
     private fun baseRequest(item: DownloadItem): Request.Builder =
         Request.Builder()
             .url(item.mediaUrl)
@@ -427,14 +383,6 @@ internal class DownloadEngine(
             .header("Accept", "*/*")
             .apply { if (item.sourceUrl != item.mediaUrl) header("Referer", item.sourceUrl) }
 
-    /**
-     * Publishes progress without touching the status.
-     *
-     * This is deliberate and was a real bug: a progress tick that also wrote
-     * `Running` would land a fraction of a second after the user tapped pause
-     * and put the row straight back to running, so pausing appeared to need
-     * two taps. Progress never decides status now — only the service does.
-     */
     private fun publish(id: String, downloaded: Long, totalBytes: Long, speed: Long) {
         repository.updateProgressInMemory(id) { item ->
             if (item.status != DownloadStatus.Running) {
