@@ -7,10 +7,14 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.dawood.orbit.tools.videodownloader.data.DownloadRepository
+import com.dawood.orbit.tools.videodownloader.data.HistoryEntry
+import com.dawood.orbit.tools.videodownloader.data.HistoryStore
+import com.dawood.orbit.tools.videodownloader.extractor.StreamExtractor
 import com.dawood.orbit.tools.videodownloader.model.DownloadItem
 import com.dawood.orbit.tools.videodownloader.model.DownloadStatus
 import com.dawood.orbit.tools.videodownloader.model.QualityPreference
 import com.dawood.orbit.tools.videodownloader.resolve.MediaResolver
+import com.dawood.orbit.tools.videodownloader.resolve.PlaylistEntry
 import com.dawood.orbit.tools.videodownloader.resolve.ResolveResult
 import com.dawood.orbit.tools.videodownloader.resolve.ResolvedMedia
 import com.dawood.orbit.tools.videodownloader.resolve.ResolvedPlaylist
@@ -25,7 +29,6 @@ data class PlaybackRequest(
     val url: String,
     val localPath: String?,
     val streaming: Boolean,
-    /** Alternate streams for the quality menu (streaming only). */
     val qualities: List<ResolvedMedia> = emptyList(),
 )
 
@@ -43,7 +46,23 @@ sealed interface ResolveUiState {
         val enqueueProgress: Int = 0,
         val enqueueTotal: Int = 0,
         val lastError: String? = null,
-    ) : ResolveUiState
+        /** Filter text applied to entry titles (phase 3). */
+        val filter: String = "",
+        /** Minimum duration seconds filter; 0 = off. */
+        val minDurationSec: Long = 0L,
+    ) : ResolveUiState {
+        val visibleEntries: List<PlaylistEntry>
+            get() {
+                val q = filter.trim().lowercase()
+                return playlist.entries.filter { entry ->
+                    val matchesText = q.isEmpty() || entry.title.lowercase().contains(q) ||
+                        (entry.uploader?.lowercase()?.contains(q) == true)
+                    val matchesDur = minDurationSec <= 0 ||
+                        (entry.durationSeconds ?: 0L) >= minDurationSec
+                    matchesText && matchesDur
+                }
+            }
+    }
 
     data class Error(val message: String) : ResolveUiState
 }
@@ -52,10 +71,15 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
 
     private val repository = DownloadRepository.get(application)
     private val resolver = MediaResolver()
+    private val history = HistoryStore.get(application)
 
     val downloads: StateFlow<List<DownloadItem>> = repository.items
 
     var url by mutableStateOf("")
+        private set
+
+    /** false = URL mode, true = YouTube search mode. */
+    var searchMode by mutableStateOf(false)
         private set
 
     var resolveState by mutableStateOf<ResolveUiState>(ResolveUiState.Idle)
@@ -64,9 +88,24 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
     var expandedPlaylistGroupId by mutableStateOf<String?>(null)
         private set
 
+    var historyEntries by mutableStateOf(history.list())
+        private set
+
+    var playing by mutableStateOf<PlaybackRequest?>(null)
+        private set
+
+    /** Fullscreen dialog vs mini bar while audio/video keeps going. */
+    var playerExpanded by mutableStateOf(false)
+        private set
+
     fun onUrlChange(value: String) {
         url = value
         if (resolveState !is ResolveUiState.Idle) resolveState = ResolveUiState.Idle
+    }
+
+    fun setSearchMode(enabled: Boolean) {
+        searchMode = enabled
+        resolveState = ResolveUiState.Idle
     }
 
     fun resolve() {
@@ -74,18 +113,93 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
         if (target.isEmpty()) return
         resolveState = ResolveUiState.Working
         viewModelScope.launch {
-            resolveState = when (val result = resolver.resolve(target)) {
-                is ResolveResult.Success -> ResolveUiState.Ready(result.candidates)
-                is ResolveResult.Playlist -> ResolveUiState.Playlist(result.playlist)
-                is ResolveResult.Failure -> ResolveUiState.Error(result.reason)
+            if (searchMode || looksLikeSearchQuery(target)) {
+                searchYoutubeInternal(target)
+            } else {
+                resolveState = when (val result = resolver.resolve(target)) {
+                    is ResolveResult.Success -> {
+                        rememberHistory(
+                            query = target,
+                            title = result.candidates.firstOrNull()?.title ?: target,
+                            kind = "url",
+                            thumb = result.candidates.firstOrNull()?.thumbnailUrl,
+                        )
+                        ResolveUiState.Ready(result.candidates)
+                    }
+                    is ResolveResult.Playlist -> {
+                        rememberHistory(
+                            query = target,
+                            title = result.playlist.title,
+                            kind = "url",
+                            thumb = result.playlist.thumbnailUrl,
+                        )
+                        ResolveUiState.Playlist(result.playlist)
+                    }
+                    is ResolveResult.Failure -> ResolveUiState.Error(result.reason)
+                }
             }
         }
     }
 
+    fun searchYoutube() {
+        val q = url.trim()
+        if (q.isEmpty()) return
+        searchMode = true
+        resolveState = ResolveUiState.Working
+        viewModelScope.launch { searchYoutubeInternal(q) }
+    }
+
+    private suspend fun searchYoutubeInternal(q: String) {
+        resolveState = when (val outcome = StreamExtractor.searchYouTube(q)) {
+            is StreamExtractor.Outcome.Playlist -> {
+                rememberHistory(query = q, title = "Search: $q", kind = "search")
+                ResolveUiState.Playlist(outcome.playlist)
+            }
+            is StreamExtractor.Outcome.Found -> ResolveUiState.Ready(outcome.candidates)
+            is StreamExtractor.Outcome.Failed -> ResolveUiState.Error(outcome.message)
+            is StreamExtractor.Outcome.NotSupported -> ResolveUiState.Error(outcome.reason)
+        }
+    }
+
+    private fun looksLikeSearchQuery(text: String): Boolean {
+        if (text.startsWith("http://") || text.startsWith("https://")) return false
+        if (text.contains('.') && text.contains('/')) return false
+        return text.length in 2..120 && !text.contains("www.")
+    }
+
+    private fun rememberHistory(
+        query: String,
+        title: String,
+        kind: String,
+        thumb: String? = null,
+    ) {
+        history.add(
+            HistoryEntry(
+                id = UUID.randomUUID().toString(),
+                query = query,
+                title = title,
+                kind = kind,
+                thumbnailUrl = thumb,
+            ),
+        )
+        historyEntries = history.list()
+    }
+
+    fun openHistory(entry: HistoryEntry) {
+        url = entry.query
+        searchMode = entry.kind == "search"
+        resolve()
+    }
+
+    fun clearHistory() {
+        history.clear()
+        historyEntries = emptyList()
+    }
+
     fun enqueueAll(candidates: List<ResolvedMedia>) {
         candidates.forEach { enqueue(it, clearInput = false) }
-        url = ""
-        resolveState = ResolveUiState.Idle
+        // Keep list? User asked to keep list while playing, but after download
+        // clearing is fine. Leave candidates visible.
     }
 
     fun enqueue(
@@ -121,10 +235,16 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
             ),
         )
         DownloadController.start(context, id)
+        rememberHistory(
+            query = sourceUrlOverride ?: media.mediaUrl,
+            title = media.title,
+            kind = "download",
+            thumb = media.thumbnailUrl,
+        )
 
         if (clearInput) {
             url = ""
-            resolveState = ResolveUiState.Idle
+            // Do not clear resolveState so the list stays if user is browsing
         }
     }
 
@@ -138,7 +258,7 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
     fun selectAllPlaylist() {
         val state = resolveState as? ResolveUiState.Playlist ?: return
         resolveState = state.copy(
-            selectedUrls = state.playlist.entries.map { it.url }.toSet(),
+            selectedUrls = state.visibleEntries.map { it.url }.toSet(),
             lastError = null,
         )
     }
@@ -151,6 +271,16 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
     fun setPlaylistQuality(quality: QualityPreference) {
         val state = resolveState as? ResolveUiState.Playlist ?: return
         resolveState = state.copy(quality = quality, lastError = null)
+    }
+
+    fun setPlaylistFilter(filter: String) {
+        val state = resolveState as? ResolveUiState.Playlist ?: return
+        resolveState = state.copy(filter = filter)
+    }
+
+    fun setMinDuration(sec: Long) {
+        val state = resolveState as? ResolveUiState.Playlist ?: return
+        resolveState = state.copy(minDurationSec = sec)
     }
 
     fun enqueueSelectedPlaylist() {
@@ -195,15 +325,40 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
                 }
             }
 
-            url = ""
             expandedPlaylistGroupId = groupId
+            val current = resolveState as? ResolveUiState.Playlist
             resolveState = if (failed > 0 && failed == selected.size) {
                 ResolveUiState.Error(
-                    "Could not resolve any of the $failed selected videos. " +
-                        "The site may have changed or the videos are restricted.",
+                    "Could not resolve any of the $failed selected videos.",
                 )
+            } else if (current != null) {
+                current.copy(enqueueing = false, enqueueProgress = 0, enqueueTotal = 0)
             } else {
                 ResolveUiState.Idle
+            }
+        }
+    }
+
+    /** Play a playlist entry without leaving the list. */
+    fun playPlaylistEntry(entry: PlaylistEntry) {
+        viewModelScope.launch {
+            when (val result = resolver.resolvePlaylistEntry(entry.url)) {
+                is ResolveResult.Success -> {
+                    val best = result.candidates.firstOrNull() ?: return@launch
+                    playing = PlaybackRequest(
+                        title = best.title.ifBlank { entry.title },
+                        url = best.mediaUrl,
+                        localPath = null,
+                        streaming = true,
+                        qualities = result.candidates,
+                    )
+                    playerExpanded = true
+                }
+                is ResolveResult.Failure -> {
+                    // surface as transient: keep list, show error state briefly not ideal;
+                    // leave list intact
+                }
+                else -> Unit
             }
         }
     }
@@ -228,9 +383,6 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
             .forEach { resume(it.id) }
     }
 
-    var playing by mutableStateOf<PlaybackRequest?>(null)
-        private set
-
     fun play(item: DownloadItem) {
         playing = if (item.status == DownloadStatus.Completed) {
             PlaybackRequest(
@@ -247,6 +399,7 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
                 streaming = true,
             )
         }
+        playerExpanded = true
     }
 
     fun preview(media: ResolvedMedia, allQualities: List<ResolvedMedia> = emptyList()) {
@@ -257,10 +410,21 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
             streaming = true,
             qualities = allQualities.ifEmpty { listOf(media) },
         )
+        playerExpanded = true
+    }
+
+    /** Leave fullscreen but keep audio/video going (mini player). */
+    fun minimizePlayer() {
+        playerExpanded = false
+    }
+
+    fun expandPlayer() {
+        if (playing != null) playerExpanded = true
     }
 
     fun stopPlaying() {
         playing = null
+        playerExpanded = false
     }
 
     fun pause(id: String) = DownloadController.pause(getApplication<Application>(), id)
@@ -290,9 +454,5 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
             if (candidate !in taken) return candidate
             index++
         }
-    }
-
-    companion object {
-        fun isFinished(item: DownloadItem): Boolean = item.status == DownloadStatus.Completed
     }
 }
