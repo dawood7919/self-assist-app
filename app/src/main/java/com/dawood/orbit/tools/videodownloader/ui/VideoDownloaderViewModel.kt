@@ -25,6 +25,8 @@ data class PlaybackRequest(
     val url: String,
     val localPath: String?,
     val streaming: Boolean,
+    /** Alternate streams for the quality menu (streaming only). */
+    val qualities: List<ResolvedMedia> = emptyList(),
 )
 
 sealed interface ResolveUiState {
@@ -59,7 +61,6 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
     var resolveState by mutableStateOf<ResolveUiState>(ResolveUiState.Idle)
         private set
 
-    /** Which playlist group card is expanded in the queue, if any. */
     var expandedPlaylistGroupId by mutableStateOf<String?>(null)
         private set
 
@@ -248,12 +249,13 @@ class VideoDownloaderViewModel(application: Application) : AndroidViewModel(appl
         }
     }
 
-    fun preview(media: ResolvedMedia) {
+    fun preview(media: ResolvedMedia, allQualities: List<ResolvedMedia> = emptyList()) {
         playing = PlaybackRequest(
             title = media.title,
             url = media.mediaUrl,
             localPath = null,
             streaming = true,
+            qualities = allQualities.ifEmpty { listOf(media) },
         )
     }
 

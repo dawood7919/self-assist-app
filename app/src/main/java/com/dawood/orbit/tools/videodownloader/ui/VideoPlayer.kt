@@ -15,15 +15,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,14 +62,12 @@ import kotlinx.coroutines.delay
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
-private const val SEEK_SHORT_MS = 10_000L
+private const val SEEK_MS = 10_000L
 private const val SEEK_LONG_MS = 30_000L
 
 /**
- * In-app player: play / pause, seek, quality pick, immersive fullscreen.
- *
- * Opens full-screen by default (VLC-style watch surface). System bars are
- * hidden while open and restored on dismiss.
+ * Immersive fullscreen player (watch surface only):
+ * play/pause, ±10s / ±30s, quality pick, progress.
  */
 @OptIn(UnstableApi::class)
 @Composable
@@ -87,29 +83,24 @@ fun VideoPlayerModal(
     var isPlaying by remember(request.url) { mutableStateOf(true) }
     var positionMs by remember(request.url) { mutableLongStateOf(0L) }
     var durationMs by remember(request.url) { mutableLongStateOf(0L) }
-    var buffered by remember(request.url) { mutableFloatStateOf(0f) }
 
     val qualities = remember(request) {
         request.qualities.ifEmpty {
             listOf(
                 ResolvedMedia(
-                    mediaUrl = request.url,
+                    mediaUrl = request.localPath ?: request.url,
                     title = request.title,
                     fileName = "video.mp4",
                     mimeType = "video/mp4",
                     sizeBytes = -1L,
                     resumable = true,
-                    qualityLabel = null,
+                    qualityLabel = "Default",
                 ),
             )
         }
     }
     var selectedQuality by remember(request.url) {
-        mutableStateOf(
-            qualities.firstOrNull {
-                it.mediaUrl == request.url || it.mediaUrl == (request.localPath ?: request.url)
-            } ?: qualities.first(),
-        )
+        mutableStateOf(qualities.first())
     }
     var qualityMenuOpen by remember { mutableStateOf(false) }
 
@@ -148,17 +139,14 @@ fun VideoPlayerModal(
         }
     }
 
-    // Position ticker for the scrub bar
     LaunchedEffect(player) {
         while (true) {
             positionMs = player.currentPosition.coerceAtLeast(0L)
             durationMs = player.duration.takeIf { it > 0 } ?: 0L
-            buffered = player.bufferedPercentage / 100f
             delay(250)
         }
     }
 
-    // Auto-hide controls
     LaunchedEffect(controlsVisible, isPlaying) {
         if (controlsVisible && isPlaying) {
             delay(3200)
@@ -168,6 +156,7 @@ fun VideoPlayerModal(
     }
 
     fun switchQuality(media: ResolvedMedia) {
+        if (request.localPath != null) return // local file has one track
         val pos = player.currentPosition
         val wasPlaying = player.isPlaying
         selectedQuality = media
@@ -235,13 +224,9 @@ fun VideoPlayerModal(
                     if (!controlsVisible) qualityMenuOpen = false
                 },
         ) {
-            PlayerSurface(
-                player = player,
-                modifier = Modifier.fillMaxSize(),
-            )
+            PlayerSurface(player = player, modifier = Modifier.fillMaxSize())
 
             if (controlsVisible) {
-                // Top bar
                 Row(
                     modifier = Modifier
                         .align(Alignment.TopStart)
@@ -264,7 +249,7 @@ fun VideoPlayerModal(
                         maxLines = 1,
                         modifier = Modifier.weight(1f),
                     )
-                    if (qualities.size > 1) {
+                    if (qualities.size > 1 && request.localPath == null) {
                         OrbitButton(
                             text = selectedQuality.qualityLabel ?: "Quality",
                             onClick = { qualityMenuOpen = !qualityMenuOpen },
@@ -274,7 +259,6 @@ fun VideoPlayerModal(
                     }
                 }
 
-                // Center transport
                 Row(
                     modifier = Modifier.align(Alignment.Center),
                     horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.lg),
@@ -283,30 +267,32 @@ fun VideoPlayerModal(
                     OrbitIconButton(
                         icon = OrbitIcons.Replay30,
                         contentDescription = "Back 30s",
-                        onClick = { player.seekTo((player.currentPosition - SEEK_LONG_MS).coerceAtLeast(0)) },
+                        onClick = {
+                            player.seekTo((player.currentPosition - SEEK_LONG_MS).coerceAtLeast(0))
+                        },
                         tint = Color.White,
                     )
                     OrbitIconButton(
-                        icon = OrbitIcons.Replay10,
+                        icon = OrbitIcons.Replay30,
                         contentDescription = "Back 10s",
-                        onClick = { player.seekTo((player.currentPosition - SEEK_SHORT_MS).coerceAtLeast(0)) },
+                        onClick = {
+                            player.seekTo((player.currentPosition - SEEK_MS).coerceAtLeast(0))
+                        },
                         tint = Color.White,
                     )
                     OrbitIconButton(
                         icon = if (isPlaying) OrbitIcons.Pause else OrbitIcons.Play,
                         contentDescription = if (isPlaying) "Pause" else "Play",
-                        onClick = {
-                            if (player.isPlaying) player.pause() else player.play()
-                        },
+                        onClick = { if (player.isPlaying) player.pause() else player.play() },
                         tint = Color.White,
                     )
                     OrbitIconButton(
-                        icon = OrbitIcons.Forward10,
+                        icon = OrbitIcons.Forward30,
                         contentDescription = "Forward 10s",
                         onClick = {
                             val d = player.duration
-                            val target = player.currentPosition + SEEK_SHORT_MS
-                            player.seekTo(if (d > 0) target.coerceAtMost(d) else target)
+                            val t = player.currentPosition + SEEK_MS
+                            player.seekTo(if (d > 0) t.coerceAtMost(d) else t)
                         },
                         tint = Color.White,
                     )
@@ -315,14 +301,13 @@ fun VideoPlayerModal(
                         contentDescription = "Forward 30s",
                         onClick = {
                             val d = player.duration
-                            val target = player.currentPosition + SEEK_LONG_MS
-                            player.seekTo(if (d > 0) target.coerceAtMost(d) else target)
+                            val t = player.currentPosition + SEEK_LONG_MS
+                            player.seekTo(if (d > 0) t.coerceAtMost(d) else t)
                         },
                         tint = Color.White,
                     )
                 }
 
-                // Bottom scrub
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
@@ -344,14 +329,11 @@ fun VideoPlayerModal(
                             style = OrbitTheme.typography.caption,
                             color = Color.White,
                         )
-                        // Simple progress: tap zones left/right handled by seek buttons;
-                        // visual bar only (full scrub gesture kept light).
                         Box(
                             modifier = Modifier
                                 .weight(1f)
                                 .padding(vertical = OrbitTheme.spacing.sm)
-                                .background(Color.White.copy(alpha = 0.25f))
-                                .clickable { /* reserved for future scrub */ },
+                                .background(Color.White.copy(alpha = 0.25f)),
                         ) {
                             val progress = if (durationMs > 0) {
                                 (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
@@ -373,7 +355,6 @@ fun VideoPlayerModal(
                     }
                 }
 
-                // Quality menu
                 if (qualityMenuOpen && qualities.size > 1) {
                     Column(
                         modifier = Modifier
@@ -423,7 +404,7 @@ private fun PlayerSurface(player: ExoPlayer, modifier: Modifier = Modifier) {
         factory = { viewContext ->
             PlayerView(viewContext).apply {
                 this.player = player
-                useController = false // custom controls only
+                useController = false
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
