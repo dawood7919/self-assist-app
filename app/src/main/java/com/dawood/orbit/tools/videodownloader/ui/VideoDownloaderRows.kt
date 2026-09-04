@@ -36,84 +36,28 @@ internal fun ResolvedCandidates(
     onPreview: (ResolvedMedia) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
-        if (candidates.size > 1) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
-            ) {
-                OrbitText(
-                    text = "${candidates.size} streams available",
-                    style = OrbitTheme.typography.h4,
-                    modifier = Modifier.weight(1f),
-                )
+    Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+        ) {
+            OrbitText(
+                text = if (candidates.size > 1) {
+                    "${candidates.size} streams"
+                } else {
+                    "Ready"
+                },
+                style = OrbitTheme.typography.h4,
+                modifier = Modifier.weight(1f),
+            )
+            if (candidates.size > 1) {
                 OrbitButton(
                     text = "Download all",
                     onClick = onDownloadAll,
                     variant = OrbitButtonVariant.Secondary,
                     size = OrbitButtonSize.Small,
                     leadingIcon = OrbitIcons.Download,
-                )
-                OrbitIconButton(
-                    icon = OrbitIcons.Close,
-                    contentDescription = "Dismiss",
-                    onClick = onDismiss,
-                    size = OrbitButtonSize.Small,
-                )
-            }
-        }
-        candidates.forEach { media ->
-            ResolvedCard(
-                media = media,
-                onDownload = { onDownload(media) },
-                onPreview = { onPreview(media) },
-                onDismiss = onDismiss,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ResolvedCard(
-    media: ResolvedMedia,
-    onDownload: () -> Unit,
-    onPreview: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    OrbitCard(color = OrbitTheme.colors.surfaceSunken) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            VideoThumbnail(
-                thumbnailUrl = media.thumbnailUrl,
-                localPath = null,
-                size = OrbitTheme.sizes.thumbnail,
-                contentDescription = null,
-            )
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xxs),
-            ) {
-                OrbitText(
-                    text = media.title,
-                    style = OrbitTheme.typography.h4,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                OrbitText(
-                    text = buildString {
-                        media.qualityLabel?.let { append(it); append(" · ") }
-                        append(media.mimeType)
-                        if (media.sizeBytes > 0) append(" · ${formatBytes(media.sizeBytes)}")
-                        if (!media.resumable) append(" · no resume")
-                        media.serviceName?.let { append(" · "); append(it) }
-                    },
-                    style = OrbitTheme.typography.caption,
-                    color = OrbitTheme.colors.textMuted,
-                    maxLines = 1,
                 )
             }
             OrbitIconButton(
@@ -123,31 +67,68 @@ private fun ResolvedCard(
                 size = OrbitButtonSize.Small,
             )
         }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = OrbitTheme.spacing.md),
-            horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (media.resumable) {
-                OrbitBadge("Resumable", tone = OrbitTone.Success, showDot = true)
-            } else {
-                OrbitBadge("No resume", tone = OrbitTone.Warning, showDot = true)
+        candidates.forEach { media ->
+            ResolvedCardLarge(
+                media = media,
+                onDownload = { onDownload(media) },
+                onPreview = { onPreview(media) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ResolvedCardLarge(
+    media: ResolvedMedia,
+    onDownload: () -> Unit,
+    onPreview: () -> Unit,
+) {
+    OrbitCard(color = OrbitTheme.colors.surfaceSunken) {
+        Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
+            VideoThumbnailWide(
+                thumbnailUrl = media.thumbnailUrl,
+                localPath = null,
+                contentDescription = media.title,
+            )
+            OrbitText(
+                text = media.title,
+                style = OrbitTheme.typography.h4,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            OrbitText(
+                text = buildString {
+                    media.qualityLabel?.let { append(it); append(" · ") }
+                    append(media.mimeType)
+                    if (media.sizeBytes > 0) append(" · ${formatBytes(media.sizeBytes)}")
+                    media.serviceName?.let { append(" · "); append(it) }
+                },
+                style = OrbitTheme.typography.caption,
+                color = OrbitTheme.colors.textMuted,
+                maxLines = 1,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (media.resumable) {
+                    OrbitBadge("Resumable", tone = OrbitTone.Success, showDot = true)
+                }
+                Box(Modifier.weight(1f))
+                OrbitButton(
+                    text = "Play",
+                    onClick = onPreview,
+                    variant = OrbitButtonVariant.Ghost,
+                    size = OrbitButtonSize.Small,
+                    leadingIcon = OrbitIcons.Play,
+                )
+                OrbitButton(
+                    text = "Download",
+                    onClick = onDownload,
+                    leadingIcon = OrbitIcons.Download,
+                )
             }
-            Box(Modifier.weight(1f))
-            OrbitButton(
-                text = "Preview",
-                onClick = onPreview,
-                variant = OrbitButtonVariant.Ghost,
-                size = OrbitButtonSize.Small,
-                leadingIcon = OrbitIcons.Play,
-            )
-            OrbitButton(
-                text = "Download",
-                onClick = onDownload,
-                leadingIcon = OrbitIcons.Download,
-            )
         }
     }
 }
@@ -239,9 +220,6 @@ internal fun DownloadRow(
             OrbitBadge(statusLabel(item), tone = tone, showDot = true)
             if (item.isSegmented && item.status == DownloadStatus.Running) {
                 OrbitBadge(text = "${item.segments.size} connections", tone = OrbitTone.Info)
-            }
-            if (!item.resumable && item.status != DownloadStatus.Completed) {
-                OrbitBadge("Restarts on pause", tone = OrbitTone.Neutral)
             }
             Box(Modifier.weight(1f))
             val error = item.errorMessage

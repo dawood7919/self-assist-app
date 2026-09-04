@@ -3,6 +3,8 @@ package com.dawood.orbit.tools.videodownloader.ui
 import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -23,14 +25,6 @@ import com.dawood.orbit.core.designsystem.theme.OrbitTheme
 import com.dawood.orbit.tools.videodownloader.resolve.HttpClients
 import java.io.File
 
-/**
- * The poster for a video.
- *
- * Three sources, in the order they are worth trusting: the poster image the
- * page advertised, a frame decoded out of the finished file, and — when there
- * is neither — the same icon tile the rest of the app uses, so a video with no
- * artwork still looks like it belongs rather than leaving a hole.
- */
 @Composable
 fun VideoThumbnail(
     thumbnailUrl: String?,
@@ -39,33 +33,64 @@ fun VideoThumbnail(
     modifier: Modifier = Modifier,
     contentDescription: String? = null,
 ) {
-    val context = LocalContext.current
-    val shape = OrbitTheme.radius.shapeMd
+    ThumbnailImage(
+        thumbnailUrl = thumbnailUrl,
+        localPath = localPath,
+        contentDescription = contentDescription,
+        modifier = modifier.size(size).clip(OrbitTheme.radius.shapeMd),
+    )
+}
 
-    // A frame can only be decoded from a file that is finished and present.
+/** Full-width 16:9 poster for large result cards. */
+@Composable
+fun VideoThumbnailWide(
+    thumbnailUrl: String?,
+    localPath: String? = null,
+    modifier: Modifier = Modifier,
+    contentDescription: String? = null,
+) {
+    ThumbnailImage(
+        thumbnailUrl = thumbnailUrl,
+        localPath = localPath,
+        contentDescription = contentDescription,
+        modifier = modifier
+            .fillMaxWidth()
+            .aspectRatio(16f / 9f)
+            .clip(OrbitTheme.radius.shapeMd),
+    )
+}
+
+@Composable
+private fun ThumbnailImage(
+    thumbnailUrl: String?,
+    localPath: String?,
+    contentDescription: String?,
+    modifier: Modifier,
+) {
+    val context = LocalContext.current
     val localVideo = remember(localPath) {
         localPath?.let { File(it) }?.takeIf { it.isFile && it.length() > 0 }
     }
     val model = thumbnailUrl ?: localVideo
 
     if (model == null) {
-        OrbitIconTile(
-            icon = OrbitIcons.Video,
-            modifier = modifier,
-            size = size,
-            iconSize = OrbitTheme.sizes.iconLg,
-            shape = shape,
-        )
+        Box(
+            modifier = modifier.background(OrbitTheme.colors.surfaceSunken),
+            contentAlignment = Alignment.Center,
+        ) {
+            OrbitIcon(
+                icon = OrbitIcons.Video,
+                contentDescription = null,
+                size = OrbitTheme.sizes.iconXl,
+                tint = OrbitTheme.colors.textMuted,
+            )
+        }
         return
     }
 
     val loader = remember(context) {
         ImageLoader.Builder(context)
-            .components {
-                // Lets Coil treat a local video file as an image source by
-                // pulling a frame out of it.
-                add(VideoFrameDecoder.Factory())
-            }
+            .components { add(VideoFrameDecoder.Factory()) }
             .build()
     }
 
@@ -73,8 +98,6 @@ fun VideoThumbnail(
         ImageRequest.Builder(context)
             .data(model)
             .apply {
-                // Hosts that gate their media behind a browser check gate the
-                // poster the same way.
                 if (model is String) setHeader("User-Agent", HttpClients.USER_AGENT)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) allowHardware(true)
             }
@@ -86,10 +109,7 @@ fun VideoThumbnail(
         model = request,
         imageLoader = loader,
         contentDescription = contentDescription,
-        modifier = modifier
-            .size(size)
-            .clip(shape)
-            .background(OrbitTheme.colors.surfaceSunken),
+        modifier = modifier.background(OrbitTheme.colors.surfaceSunken),
         contentScale = ContentScale.Crop,
         loading = {
             Box(Modifier.background(OrbitTheme.colors.surfaceSunken))
