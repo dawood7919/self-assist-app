@@ -32,6 +32,9 @@ import org.schabi.newpipe.extractor.stream.VideoStream
  */
 object StreamExtractor {
 
+    private const val MAX_PLAYLIST_ITEMS = 300
+    private const val MAX_PLAYLIST_PAGES = 15
+
     /** What went wrong, in words worth showing someone. */
     sealed interface Outcome {
         data class Found(
@@ -279,9 +282,4 @@ object StreamExtractor {
         ensureInitialised()
         ServiceList.all().map { it.serviceInfo.name }
     }.getOrDefault(emptyList())
-
-    private companion object {
-        const val MAX_PLAYLIST_ITEMS = 300
-        const val MAX_PLAYLIST_PAGES = 15
-    }
 }
