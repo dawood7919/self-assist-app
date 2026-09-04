@@ -20,6 +20,7 @@ import com.dawood.orbit.core.designsystem.component.OrbitCheckbox
 import com.dawood.orbit.core.designsystem.component.OrbitIconButton
 import com.dawood.orbit.core.designsystem.component.OrbitProgressBar
 import com.dawood.orbit.core.designsystem.component.OrbitText
+import com.dawood.orbit.core.designsystem.component.OrbitTextField
 import com.dawood.orbit.core.designsystem.component.OrbitTone
 import com.dawood.orbit.core.designsystem.icon.OrbitIcons
 import com.dawood.orbit.core.designsystem.theme.OrbitTheme
@@ -35,9 +36,13 @@ internal fun PlaylistPicker(
     onClearSelection: () -> Unit,
     onQuality: (QualityPreference) -> Unit,
     onDownloadSelected: () -> Unit,
+    onPlayEntry: (PlaylistEntry) -> Unit,
+    onFilter: (String) -> Unit,
+    onMinDuration: (Long) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val playlist = state.playlist
+    val visible = state.visibleEntries
     val selected = state.selectedUrls.size
     val total = playlist.entries.size
 
@@ -48,12 +53,6 @@ internal fun PlaylistPicker(
                 horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                VideoThumbnail(
-                    thumbnailUrl = playlist.thumbnailUrl,
-                    localPath = null,
-                    size = OrbitTheme.sizes.thumbnail,
-                    contentDescription = null,
-                )
                 Column(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xxs),
@@ -70,9 +69,8 @@ internal fun PlaylistPicker(
                             playlist.uploader?.takeIf { it.isNotBlank() }?.let {
                                 append(" · "); append(it)
                             }
-                            append(" · ")
-                            append("${playlist.entryCount} videos")
-                            if (playlist.truncated) append(" (showing first $total)")
+                            append(" · ${playlist.entryCount} videos")
+                            if (playlist.truncated) append(" (capped)")
                         },
                         style = OrbitTheme.typography.caption,
                         color = OrbitTheme.colors.textMuted,
@@ -86,6 +84,33 @@ internal fun PlaylistPicker(
                     size = OrbitButtonSize.Small,
                     enabled = !state.enqueueing,
                 )
+            }
+
+            OrbitTextField(
+                value = state.filter,
+                onValueChange = onFilter,
+                label = "Filter in list",
+                placeholder = "Title or channel…",
+                leadingIcon = OrbitIcons.Search,
+                modifier = Modifier.padding(top = OrbitTheme.spacing.sm),
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = OrbitTheme.spacing.sm),
+                horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xs),
+            ) {
+                listOf(0L to "Any", 60L to ">1m", 300L to ">5m", 1200L to ">20m").forEach { (sec, label) ->
+                    val on = state.minDurationSec == sec
+                    OrbitButton(
+                        text = label,
+                        onClick = { onMinDuration(sec) },
+                        variant = if (on) OrbitButtonVariant.Primary else OrbitButtonVariant.Ghost,
+                        size = OrbitButtonSize.Small,
+                        enabled = !state.enqueueing,
+                    )
+                }
             }
 
             OrbitText(
@@ -118,7 +143,7 @@ internal fun PlaylistPicker(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 OrbitBadge(
-                    text = "$selected of $total selected",
+                    text = "$selected selected · ${visible.size}/$total shown",
                     tone = if (selected > 0) OrbitTone.Accent else OrbitTone.Neutral,
                     showDot = true,
                 )
@@ -137,18 +162,22 @@ internal fun PlaylistPicker(
                     size = OrbitButtonSize.Small,
                     enabled = !state.enqueueing,
                 )
-                OrbitButton(
-                    text = if (state.enqueueing) {
-                        "Adding ${state.enqueueProgress}/${state.enqueueTotal}…"
-                    } else {
-                        "Download selected"
-                    },
-                    onClick = onDownloadSelected,
-                    leadingIcon = OrbitIcons.Download,
-                    enabled = selected > 0 && !state.enqueueing,
-                    loading = state.enqueueing,
-                )
             }
+
+            OrbitButton(
+                text = if (state.enqueueing) {
+                    "Adding ${state.enqueueProgress}/${state.enqueueTotal}…"
+                } else {
+                    "Download selected"
+                },
+                onClick = onDownloadSelected,
+                leadingIcon = OrbitIcons.Download,
+                enabled = selected > 0 && !state.enqueueing,
+                loading = state.enqueueing,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = OrbitTheme.spacing.sm),
+            )
 
             if (state.enqueueing && state.enqueueTotal > 0) {
                 OrbitProgressBar(
@@ -160,65 +189,76 @@ internal fun PlaylistPicker(
             }
         }
 
-        playlist.entries.forEach { entry ->
-            PlaylistEntryRow(
+        visible.forEach { entry ->
+            PlaylistEntryCard(
                 entry = entry,
                 selected = entry.url in state.selectedUrls,
                 enabled = !state.enqueueing,
                 onToggle = { onToggle(entry.url) },
+                onPlay = { onPlayEntry(entry) },
             )
         }
     }
 }
 
 @Composable
-private fun PlaylistEntryRow(
+private fun PlaylistEntryCard(
     entry: PlaylistEntry,
     selected: Boolean,
     enabled: Boolean,
     onToggle: () -> Unit,
+    onPlay: () -> Unit,
 ) {
     OrbitCard(color = OrbitTheme.colors.surface) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(enabled = enabled, onClick = onToggle),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
-        ) {
-            OrbitCheckbox(
-                checked = selected,
-                onCheckedChange = if (enabled) {{ onToggle() }} else null,
-                enabled = enabled,
-            )
-            VideoThumbnail(
-                thumbnailUrl = entry.thumbnailUrl,
-                localPath = null,
-                size = OrbitTheme.sizes.thumbnail,
-                contentDescription = null,
-            )
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xxs),
+        Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = enabled, onClick = onToggle),
             ) {
-                OrbitText(
-                    text = entry.title,
-                    style = OrbitTheme.typography.bodySmall,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
+                VideoThumbnailWide(
+                    thumbnailUrl = entry.thumbnailUrl,
+                    contentDescription = entry.title,
                 )
-                val meta = buildString {
-                    entry.uploader?.takeIf { it.isNotBlank() }?.let { append(it) }
-                    entry.durationSeconds?.let { seconds ->
-                        if (isNotEmpty()) append(" · ")
-                        append(formatDuration(seconds))
-                    }
-                }.ifBlank { "Video" }
-                OrbitText(
-                    text = meta,
-                    style = OrbitTheme.typography.caption,
-                    color = OrbitTheme.colors.textMuted,
-                    maxLines = 1,
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+            ) {
+                OrbitCheckbox(
+                    checked = selected,
+                    onCheckedChange = if (enabled) {{ onToggle() }} else null,
+                    enabled = enabled,
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    OrbitText(
+                        text = entry.title,
+                        style = OrbitTheme.typography.bodySmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    val meta = buildString {
+                        entry.uploader?.takeIf { it.isNotBlank() }?.let { append(it) }
+                        entry.durationSeconds?.let { seconds ->
+                            if (isNotEmpty()) append(" · ")
+                            append(formatDuration(seconds))
+                        }
+                    }.ifBlank { "Video" }
+                    OrbitText(
+                        text = meta,
+                        style = OrbitTheme.typography.caption,
+                        color = OrbitTheme.colors.textMuted,
+                        maxLines = 1,
+                    )
+                }
+                OrbitButton(
+                    text = "Play",
+                    onClick = onPlay,
+                    variant = OrbitButtonVariant.Ghost,
+                    size = OrbitButtonSize.Small,
+                    leadingIcon = OrbitIcons.Play,
+                    enabled = enabled,
                 )
             }
         }
