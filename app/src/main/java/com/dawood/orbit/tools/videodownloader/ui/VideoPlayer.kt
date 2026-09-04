@@ -8,6 +8,8 @@ import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,13 +17,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,6 +34,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.viewinterop.AndroidView
@@ -38,6 +45,8 @@ import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -51,6 +60,7 @@ import com.dawood.orbit.core.designsystem.component.OrbitBadge
 import com.dawood.orbit.core.designsystem.component.OrbitButton
 import com.dawood.orbit.core.designsystem.component.OrbitButtonSize
 import com.dawood.orbit.core.designsystem.component.OrbitButtonVariant
+import com.dawood.orbit.core.designsystem.component.OrbitCard
 import com.dawood.orbit.core.designsystem.component.OrbitIconButton
 import com.dawood.orbit.core.designsystem.component.OrbitText
 import com.dawood.orbit.core.designsystem.component.OrbitTone
@@ -66,13 +76,18 @@ private const val SEEK_MS = 10_000L
 private const val SEEK_LONG_MS = 30_000L
 
 /**
- * Immersive fullscreen player (watch surface only):
- * play/pause, ±10s / ±30s, quality pick, progress.
+ * Fullscreen player + optional mini bar.
+ *
+ * Scrubber supports tap and drag. Closing fullscreen minimizes to the mini
+ * bar so playback continues while the user browses the list (in-app background).
  */
 @OptIn(UnstableApi::class)
 @Composable
 fun VideoPlayerModal(
     request: PlaybackRequest?,
+    expanded: Boolean,
+    onMinimize: () -> Unit,
+    onExpand: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     if (request == null) return
@@ -99,9 +114,7 @@ fun VideoPlayerModal(
             )
         }
     }
-    var selectedQuality by remember(request.url) {
-        mutableStateOf(qualities.first())
-    }
+    var selectedQuality by remember(request.url) { mutableStateOf(qualities.first()) }
     var qualityMenuOpen by remember { mutableStateOf(false) }
 
     val player = remember(request.url, request.localPath) {
@@ -109,10 +122,16 @@ fun VideoPlayerModal(
             .setUserAgent(HttpClients.USER_AGENT)
             .setAllowCrossProtocolRedirects(true)
 
+        val audioAttrs = AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+            .build()
+
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(httpFactory))
             .setSeekBackIncrementMs(SEEK_LONG_MS)
             .setSeekForwardIncrementMs(SEEK_LONG_MS)
+            .setAudioAttributes(audioAttrs, /* handleAudioFocus = */ true)
             .build()
             .apply {
                 val uri = request.localPath ?: selectedQuality.mediaUrl
@@ -147,8 +166,8 @@ fun VideoPlayerModal(
         }
     }
 
-    LaunchedEffect(controlsVisible, isPlaying) {
-        if (controlsVisible && isPlaying) {
+    LaunchedEffect(controlsVisible, isPlaying, expanded) {
+        if (expanded && controlsVisible && isPlaying) {
             delay(3200)
             controlsVisible = false
             qualityMenuOpen = false
@@ -156,7 +175,7 @@ fun VideoPlayerModal(
     }
 
     fun switchQuality(media: ResolvedMedia) {
-        if (request.localPath != null) return // local file has one track
+        if (request.localPath != null) return
         val pos = player.currentPosition
         val wasPlaying = player.isPlaying
         selectedQuality = media
@@ -166,6 +185,27 @@ fun VideoPlayerModal(
         player.playWhenReady = wasPlaying
         qualityMenuOpen = false
         error = null
+    }
+
+    fun seekToFraction(fraction: Float) {
+        if (durationMs <= 0) return
+        val target = (durationMs * fraction.coerceIn(0f, 1f)).toLong()
+        player.seekTo(target)
+        positionMs = target
+    }
+
+    if (!expanded) {
+        MiniPlayerBar(
+            title = request.title,
+            isPlaying = isPlaying,
+            positionMs = positionMs,
+            durationMs = durationMs,
+            onPlayPause = { if (player.isPlaying) player.pause() else player.play() },
+            onExpand = onExpand,
+            onClose = onDismiss,
+            onSeekFraction = ::seekToFraction,
+        )
+        return
     }
 
     val activity = remember(context) { context.findActivity() }
@@ -190,7 +230,7 @@ fun VideoPlayerModal(
     }
 
     Dialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = onMinimize,
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
             dismissOnBackPress = true,
@@ -210,7 +250,7 @@ fun VideoPlayerModal(
             onDispose { }
         }
 
-        BackHandler(onBack = onDismiss)
+        BackHandler(onBack = onMinimize)
 
         Box(
             modifier = Modifier
@@ -238,8 +278,8 @@ fun VideoPlayerModal(
                 ) {
                     OrbitIconButton(
                         icon = OrbitIcons.Close,
-                        contentDescription = "Close",
-                        onClick = onDismiss,
+                        contentDescription = "Minimize",
+                        onClick = onMinimize,
                         tint = Color.White,
                     )
                     OrbitText(
@@ -257,6 +297,12 @@ fun VideoPlayerModal(
                             size = OrbitButtonSize.Small,
                         )
                     }
+                    OrbitIconButton(
+                        icon = OrbitIcons.Delete,
+                        contentDescription = "Stop",
+                        onClick = onDismiss,
+                        tint = Color.White,
+                    )
                 }
 
                 Row(
@@ -319,40 +365,12 @@ fun VideoPlayerModal(
                     if (request.streaming) {
                         OrbitBadge("Streaming", tone = OrbitTone.Info)
                     }
-                    Row(
+                    SeekBar(
+                        positionMs = positionMs,
+                        durationMs = durationMs,
+                        onSeekFraction = ::seekToFraction,
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
-                    ) {
-                        OrbitText(
-                            text = formatPlayerTime(positionMs),
-                            style = OrbitTheme.typography.caption,
-                            color = Color.White,
-                        )
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(vertical = OrbitTheme.spacing.sm)
-                                .background(Color.White.copy(alpha = 0.25f)),
-                        ) {
-                            val progress = if (durationMs > 0) {
-                                (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
-                            } else {
-                                0f
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth(progress)
-                                    .padding(vertical = OrbitTheme.spacing.xxs)
-                                    .background(Color.White),
-                            )
-                        }
-                        OrbitText(
-                            text = if (durationMs > 0) formatPlayerTime(durationMs) else "--:--",
-                            style = OrbitTheme.typography.caption,
-                            color = Color.White,
-                        )
-                    }
+                    )
                 }
 
                 if (qualityMenuOpen && qualities.size > 1) {
@@ -393,6 +411,140 @@ fun VideoPlayerModal(
                         .padding(OrbitTheme.spacing.lg),
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun SeekBar(
+    positionMs: Long,
+    durationMs: Long,
+    onSeekFraction: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var barWidthPx by remember { mutableFloatStateOf(1f) }
+    val progress = if (durationMs > 0) {
+        (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+    ) {
+        OrbitText(
+            text = formatPlayerTime(positionMs),
+            style = OrbitTheme.typography.caption,
+            color = Color.White,
+        )
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(OrbitTheme.spacing.lg)
+                .onSizeChanged { barWidthPx = it.width.toFloat().coerceAtLeast(1f) }
+                .pointerInput(durationMs) {
+                    detectTapGestures { offset ->
+                        onSeekFraction(offset.x / size.width.toFloat())
+                    }
+                }
+                .pointerInput(durationMs) {
+                    detectHorizontalDragGestures { change, _ ->
+                        change.consume()
+                        onSeekFraction(change.position.x / size.width.toFloat())
+                    }
+                },
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(OrbitTheme.spacing.xxs)
+                    .background(Color.White.copy(alpha = 0.3f)),
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(progress)
+                    .height(OrbitTheme.spacing.xxs)
+                    .background(Color.White),
+            )
+            Box(
+                modifier = Modifier
+                    .padding(start = OrbitTheme.spacing.none) // thumb visual via end of progress
+                    .fillMaxWidth(progress),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(OrbitTheme.spacing.md)
+                        .background(Color.White, shape = OrbitTheme.radius.shapeFull),
+                )
+            }
+        }
+        OrbitText(
+            text = if (durationMs > 0) formatPlayerTime(durationMs) else "--:--",
+            style = OrbitTheme.typography.caption,
+            color = Color.White,
+        )
+    }
+}
+
+@Composable
+private fun MiniPlayerBar(
+    title: String,
+    isPlaying: Boolean,
+    positionMs: Long,
+    durationMs: Long,
+    onPlayPause: () -> Unit,
+    onExpand: () -> Unit,
+    onClose: () -> Unit,
+    onSeekFraction: (Float) -> Unit,
+) {
+    OrbitCard(
+        color = OrbitTheme.colors.surfaceRaised,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(OrbitTheme.spacing.md),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xs)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+            ) {
+                OrbitIconButton(
+                    icon = if (isPlaying) OrbitIcons.Pause else OrbitIcons.Play,
+                    contentDescription = "Play/Pause",
+                    onClick = onPlayPause,
+                )
+                OrbitText(
+                    text = title,
+                    style = OrbitTheme.typography.bodySmall,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(onClick = onExpand),
+                )
+                OrbitIconButton(
+                    icon = OrbitIcons.Fullscreen,
+                    contentDescription = "Expand",
+                    onClick = onExpand,
+                    size = OrbitButtonSize.Small,
+                )
+                OrbitIconButton(
+                    icon = OrbitIcons.Close,
+                    contentDescription = "Stop",
+                    onClick = onClose,
+                    size = OrbitButtonSize.Small,
+                )
+            }
+            SeekBar(
+                positionMs = positionMs,
+                durationMs = durationMs,
+                onSeekFraction = onSeekFraction,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 }
