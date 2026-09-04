@@ -24,6 +24,32 @@ data class ResolvedMedia(
     val resumable: Boolean,
     /** Poster image for the video, when the page offered one. */
     val thumbnailUrl: String? = null,
+    /** Human label such as "1080p" or "160kbps" when known. */
+    val qualityLabel: String? = null,
+    /** Extractor service name (YouTube, SoundCloud, …) when applicable. */
+    val serviceName: String? = null,
+)
+
+/** One row inside a playlist before its stream URL is resolved. */
+data class PlaylistEntry(
+    val url: String,
+    val title: String,
+    val durationSeconds: Long? = null,
+    val thumbnailUrl: String? = null,
+    val uploader: String? = null,
+)
+
+/** A whole playlist the user can pick from. */
+data class ResolvedPlaylist(
+    val url: String,
+    val title: String,
+    val uploader: String? = null,
+    val thumbnailUrl: String? = null,
+    val entryCount: Long,
+    val entries: List<PlaylistEntry>,
+    val serviceName: String,
+    /** True when the list was capped and more items exist on the site. */
+    val truncated: Boolean = false,
 )
 
 sealed interface ResolveResult {
@@ -36,22 +62,23 @@ sealed interface ResolveResult {
      */
     data class Success(val candidates: List<ResolvedMedia>) : ResolveResult
 
+    /** A playlist — the UI shows the list and resolves each pick on demand. */
+    data class Playlist(val playlist: ResolvedPlaylist) : ResolveResult
+
     data class Failure(val reason: String) : ResolveResult
 }
 
 /**
- * Turns whatever the user pasted into a downloadable media URL.
+ * Turns whatever the user pasted into a downloadable media URL — or a playlist.
  *
- * Two strategies, tried in order:
- *  1. The link already points at a media file — the common case for direct CDN
- *     links, course platforms and podcast feeds.
- *  2. The link is a web page — the page is parsed for the media it embeds
- *     (Open Graph video tags, `<video>`/`<source>`, JSON-LD `contentUrl`, and
- *     finally media URLs appearing in inline scripts).
+ * Strategies, tried in order:
+ *  1. Bundled extractor (YouTube, SoundCloud, PeerTube, Bandcamp, media.ccc.de)
+ *     for signed / per-session streams and native playlists.
+ *  2. The link already points at a media file.
+ *  3. The link is a web page — parsed for Open Graph, video tags, JSON-LD and
+ *     inline media URLs.
  *
- * Sites that hide their streams behind signed, per-session APIs — YouTube being
- * the obvious one — need a dedicated extractor and are reported as unsupported
- * rather than failing obscurely.
+ * DRM stays unsupported on purpose.
  */
 class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
 
@@ -66,6 +93,9 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
             when (val outcome = StreamExtractor.extract(url)) {
                 is StreamExtractor.Outcome.Found ->
                     return@withContext ResolveResult.Success(outcome.candidates)
+
+                is StreamExtractor.Outcome.Playlist ->
+                    return@withContext ResolveResult.Playlist(outcome.playlist)
 
                 is StreamExtractor.Outcome.NotSupported ->
                     return@withContext ResolveResult.Failure(outcome.reason)
@@ -98,8 +128,24 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
 
             else -> ResolveResult.Failure(
                 "That link returned ${direct.contentType ?: "an unknown file type"}, " +
-                    "which is not audio or video.",
+                    "which is not audio or video. " +
+                    "For signed hosts try one of: ${StreamExtractor.supportedServices().joinToString()}.",
             )
+        }
+    }
+
+    /**
+     * Resolve a single playlist entry into concrete download candidates.
+     * Used after the user selects items from a playlist picker.
+     */
+    suspend fun resolvePlaylistEntry(entryUrl: String): ResolveResult = withContext(Dispatchers.IO) {
+        when (val outcome = StreamExtractor.extractStreamUrl(entryUrl)) {
+            is StreamExtractor.Outcome.Found -> ResolveResult.Success(outcome.candidates)
+            is StreamExtractor.Outcome.Playlist -> ResolveResult.Failure(
+                "That entry resolved to another playlist, which is not supported here.",
+            )
+            is StreamExtractor.Outcome.NotSupported -> ResolveResult.Failure(outcome.reason)
+            is StreamExtractor.Outcome.Failed -> ResolveResult.Failure(outcome.message)
         }
     }
 
@@ -122,17 +168,17 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
         val poster = posterFrom(document)
         val candidates = collectCandidates(document, html)
         if (candidates.isEmpty()) {
+            val services = StreamExtractor.supportedServices().joinToString()
             return ResolveResult.Failure(
-                "No downloadable media was found on that page, and no bundled extractor " +
-                    "recognises the site.",
+                "No downloadable media was found on that page. " +
+                    "Signed hosts that work: $services. " +
+                    "HLS (.m3u8) and DRM streams are not supported.",
             )
         }
 
         val downloadable = candidates.filterNot { isHls(it) }.take(MAX_PROBES)
         val hlsSeen = candidates.any { isHls(it) }
 
-        // Probed in parallel: a page with a dozen candidates would otherwise
-        // take a dozen round trips before showing the user anything.
         val probed = coroutineScope {
             downloadable
                 .map { candidate ->
@@ -148,8 +194,6 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
             .filter { it.isMedia }
             .distinctBy { it.finalUrl }
             .mapIndexed { index, item ->
-                // Only the first gets the page title; the rest would all end up
-                // with the same name and overwrite each other in the queue.
                 item.toMedia(
                     titleHint = if (index == 0) pageTitle else null,
                     thumbnailUrl = poster,
@@ -179,7 +223,6 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
             if (trimmed.isNotEmpty() && trimmed.startsWith("http")) found += trimmed
         }
 
-        // Open Graph and Twitter cards are the most reliable, so they go first.
         listOf(
             "meta[property=og:video:secure_url]",
             "meta[property=og:video:url]",
@@ -195,7 +238,6 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
         document.select("audio[src]").forEach { add(it.absUrl("src")) }
         document.select("link[rel=alternate][type^=video]").forEach { add(it.absUrl("href")) }
 
-        // Lazy players keep the real file on a data attribute until playback.
         document.select("[data-video-src], [data-src], [data-url], [data-file]").forEach { element ->
             listOf("data-video-src", "data-src", "data-url", "data-file").forEach { attribute ->
                 val value = element.attr(attribute)
@@ -209,7 +251,6 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
             if (MEDIA_EXTENSIONS.any { href.substringBefore('?').lowercase(Locale.ROOT).endsWith(it) }) add(href)
         }
 
-        // JSON-LD and inline players keep the real file in a plain string.
         JSON_MEDIA_KEY.findAll(rawHtml).forEach { match -> add(unescape(match.groupValues[1])) }
         INLINE_MEDIA_URL.findAll(rawHtml).take(60).forEach { match -> add(unescape(match.value)) }
 
@@ -230,8 +271,6 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
                 val type = contentType?.lowercase(Locale.ROOT).orEmpty()
                 if (type.startsWith("video/") || type.startsWith("audio/")) return true
                 if (type.startsWith("text/") || type.startsWith("application/json")) return false
-                // Many CDNs serve media as a generic binary stream; fall back to
-                // the file extension rather than refusing a perfectly good file.
                 if (type.isEmpty() || type.startsWith("application/octet-stream") ||
                     type.startsWith("binary/")
                 ) {
@@ -244,11 +283,6 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
             get() = contentType?.lowercase(Locale.ROOT)?.startsWith("text/html") == true
     }
 
-    /**
-     * A one-byte ranged GET. It reveals the content type, the total size and
-     * whether the server honours ranges — the three things a resumable
-     * download needs — without pulling the file.
-     */
     private fun probe(url: String, referer: String?): Probe? {
         val request = Request.Builder()
             .url(url)
@@ -286,8 +320,6 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return null
             val body = response.body ?: return null
-            // Cap the read: a page big enough to blow memory is not a page that
-            // is going to yield a clean media link anyway.
             val source = body.source()
             source.request(MAX_HTML_BYTES)
             val available = minOf(source.buffer.size, MAX_HTML_BYTES)
@@ -311,21 +343,12 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
         )
     }
 
-    /**
-     * The page's poster image.
-     *
-     * Open Graph first because it is what the page itself advertises as
-     * representative; a `<video poster>` is the fallback and is usually the
-     * exact frame the player would show.
-     */
     private fun posterFrom(document: org.jsoup.nodes.Document): String? = sequenceOf(
         document.selectFirst("meta[property=og:image:secure_url]")?.absUrl("content"),
         document.selectFirst("meta[property=og:image]")?.absUrl("content"),
         document.selectFirst("meta[name=twitter:image]")?.absUrl("content"),
         document.selectFirst("video[poster]")?.absUrl("poster"),
     ).firstOrNull { !it.isNullOrBlank() && it.startsWith("http") }
-
-    // ── Small helpers ───────────────────────────────────────────────────────
 
     private fun normalise(raw: String): String? {
         val trimmed = raw.trim()
@@ -383,8 +406,6 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
 
     private companion object {
         const val MAX_HTML_BYTES = 2L * 1024 * 1024
-
-        /** Probing is a network round trip each, so the list is capped. */
         const val MAX_PROBES = 14
 
         val MEDIA_EXTENSIONS = listOf(
