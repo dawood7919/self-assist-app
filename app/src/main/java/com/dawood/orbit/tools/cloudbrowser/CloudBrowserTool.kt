@@ -58,12 +58,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/**
- * Cloud Browser — remote Chromium on the VPS, streamed into a WebView.
- *
- * Toolbar actions call the VPS CDP control API so navigation happens on the
- * server, not inside the phone's WebView.
- */
 @Composable
 fun CloudBrowserTool(
     tool: Tool,
@@ -147,9 +141,8 @@ fun CloudBrowserTool(
             )
         },
     ) {
-        Column(Modifier = Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
             StatusBar(status = status, message = statusMessage)
-
             BrowserToolbar(
                 address = address,
                 onAddressChange = { address = it },
@@ -163,7 +156,6 @@ fun CloudBrowserTool(
                 onReload = { runAction { api.reload() } },
                 onHome = { runAction { api.home() } },
             )
-
             if (showSettings) {
                 ServerSettingsPanel(
                     settings = browserSettings,
@@ -176,9 +168,8 @@ fun CloudBrowserTool(
                     onCancel = { showSettings = false },
                 )
             }
-
             Box(
-                modifier = Modifier
+                Modifier
                     .weight(1f)
                     .fillMaxWidth()
                     .background(OrbitTheme.colors.surfaceElevated),
@@ -192,7 +183,6 @@ fun CloudBrowserTool(
                     },
                     onWebViewReady = { webView = it },
                 )
-
                 if (status == ConnectionStatus.Error) {
                     ErrorOverlay(
                         message = statusMessage,
@@ -219,7 +209,7 @@ private fun StatusBar(status: ConnectionStatus, message: String) {
         ConnectionStatus.Error -> OrbitTheme.colors.error
     }
     Row(
-        modifier = Modifier
+        Modifier
             .fillMaxWidth()
             .background(OrbitTheme.colors.backgroundBase)
             .padding(horizontal = OrbitTheme.spacing.md, vertical = OrbitTheme.spacing.xs),
@@ -227,7 +217,7 @@ private fun StatusBar(status: ConnectionStatus, message: String) {
         horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
     ) {
         Box(
-            modifier = Modifier
+            Modifier
                 .size(8.dp)
                 .background(color, OrbitTheme.radius.pill),
         )
@@ -252,7 +242,7 @@ private fun BrowserToolbar(
     onHome: () -> Unit,
 ) {
     Row(
-        modifier = Modifier
+        Modifier
             .fillMaxWidth()
             .background(OrbitTheme.colors.surface)
             .padding(horizontal = OrbitTheme.spacing.sm, vertical = OrbitTheme.spacing.xs),
@@ -331,7 +321,7 @@ private fun ServerSettingsPanel(
     var pass by remember { mutableStateOf(settings.password) }
 
     OrbitCard(
-        modifier = Modifier
+        Modifier
             .fillMaxWidth()
             .padding(OrbitTheme.spacing.md),
     ) {
@@ -357,8 +347,8 @@ private fun ServerSettingsPanel(
                 isPassword = true,
             )
             Row(
+                Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
-                modifier = Modifier.fillMaxWidth(),
             ) {
                 OrbitButton(
                     text = "Cancel",
@@ -417,15 +407,15 @@ private fun SettingField(
 @Composable
 private fun ErrorOverlay(message: String, onRetry: () -> Unit) {
     Box(
-        modifier = Modifier
+        Modifier
             .fillMaxSize()
             .background(OrbitTheme.colors.backgroundBase.copy(alpha = 0.92f)),
         contentAlignment = Alignment.Center,
     ) {
         Column(
+            Modifier.padding(OrbitTheme.spacing.lg),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md),
-            modifier = Modifier.padding(OrbitTheme.spacing.lg),
         ) {
             OrbitIcon(
                 icon = OrbitIcons.Warning,
@@ -476,7 +466,6 @@ private fun RemoteBrowserView(
                 settings.setSupportZoom(false)
                 isLongClickable = false
                 setOnLongClickListener { true }
-
                 webChromeClient = WebChromeClient()
                 webViewClient = object : WebViewClient() {
                     override fun onReceivedHttpAuthRequest(
