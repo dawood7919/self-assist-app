@@ -43,17 +43,13 @@ internal fun ResolvedCandidates(
             horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
         ) {
             OrbitText(
-                text = if (candidates.size > 1) {
-                    "${candidates.size} streams"
-                } else {
-                    "Ready"
-                },
+                text = if (candidates.size > 1) "${candidates.size} streams" else "Ready to download",
                 style = OrbitTheme.typography.h4,
                 modifier = Modifier.weight(1f),
             )
             if (candidates.size > 1) {
                 OrbitButton(
-                    text = "Download all",
+                    text = "All",
                     onClick = onDownloadAll,
                     variant = OrbitButtonVariant.Secondary,
                     size = OrbitButtonSize.Small,
@@ -68,57 +64,76 @@ internal fun ResolvedCandidates(
             )
         }
         candidates.forEach { media ->
-            ResolvedCardLarge(
-                media = media,
+            MediaResultCard(
+                title = media.title,
+                subtitle = buildString {
+                    media.qualityLabel?.let { append(it); append(" · ") }
+                    if (media.sizeBytes > 0) append(formatBytes(media.sizeBytes))
+                    else append(media.mimeType.substringAfter('/').uppercase(Locale.US))
+                    media.serviceName?.let { append(" · "); append(it) }
+                },
+                thumbnailUrl = media.thumbnailUrl,
+                resumable = media.resumable,
+                onPlay = { onPreview(media) },
                 onDownload = { onDownload(media) },
-                onPreview = { onPreview(media) },
             )
         }
     }
 }
 
+/** Shared large result card — thumbnail first, actions second. */
 @Composable
-private fun ResolvedCardLarge(
-    media: ResolvedMedia,
+internal fun MediaResultCard(
+    title: String,
+    subtitle: String,
+    thumbnailUrl: String?,
+    onPlay: () -> Unit,
     onDownload: () -> Unit,
-    onPreview: () -> Unit,
+    resumable: Boolean = true,
+    durationSeconds: Long? = null,
+    selected: Boolean? = null,
+    onToggleSelect: (() -> Unit)? = null,
 ) {
-    OrbitCard(color = OrbitTheme.colors.surfaceSunken) {
+    OrbitCard(color = OrbitTheme.colors.surfaceElevated) {
         Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
             VideoThumbnailWide(
-                thumbnailUrl = media.thumbnailUrl,
-                localPath = null,
-                contentDescription = media.title,
+                thumbnailUrl = thumbnailUrl,
+                durationSeconds = durationSeconds,
+                contentDescription = title,
             )
             OrbitText(
-                text = media.title,
+                text = title,
                 style = OrbitTheme.typography.h4,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            OrbitText(
-                text = buildString {
-                    media.qualityLabel?.let { append(it); append(" · ") }
-                    append(media.mimeType)
-                    if (media.sizeBytes > 0) append(" · ${formatBytes(media.sizeBytes)}")
-                    media.serviceName?.let { append(" · "); append(it) }
-                },
-                style = OrbitTheme.typography.caption,
-                color = OrbitTheme.colors.textMuted,
-                maxLines = 1,
-            )
+            if (subtitle.isNotBlank()) {
+                OrbitText(
+                    text = subtitle,
+                    style = OrbitTheme.typography.caption,
+                    color = OrbitTheme.colors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (media.resumable) {
+                if (selected != null && onToggleSelect != null) {
+                    OrbitBadge(
+                        text = if (selected) "Selected" else "Tap to select",
+                        tone = if (selected) OrbitTone.Accent else OrbitTone.Neutral,
+                        showDot = selected,
+                    )
+                } else if (resumable) {
                     OrbitBadge("Resumable", tone = OrbitTone.Success, showDot = true)
                 }
                 Box(Modifier.weight(1f))
                 OrbitButton(
                     text = "Play",
-                    onClick = onPreview,
+                    onClick = onPlay,
                     variant = OrbitButtonVariant.Ghost,
                     size = OrbitButtonSize.Small,
                     leadingIcon = OrbitIcons.Play,
@@ -126,6 +141,7 @@ private fun ResolvedCardLarge(
                 OrbitButton(
                     text = "Download",
                     onClick = onDownload,
+                    size = OrbitButtonSize.Small,
                     leadingIcon = OrbitIcons.Download,
                 )
             }
@@ -195,16 +211,41 @@ internal fun DownloadRow(
             )
             when (item.status) {
                 DownloadStatus.Running, DownloadStatus.Queued, DownloadStatus.Resolving ->
-                    OrbitIconButton(icon = OrbitIcons.Pause, contentDescription = "Pause", onClick = onPause, size = OrbitButtonSize.Small)
+                    OrbitIconButton(
+                        icon = OrbitIcons.Pause,
+                        contentDescription = "Pause",
+                        onClick = onPause,
+                        size = OrbitButtonSize.Small,
+                    )
                 DownloadStatus.Paused ->
-                    OrbitIconButton(icon = OrbitIcons.Play, contentDescription = "Resume", onClick = onResume, size = OrbitButtonSize.Small)
+                    OrbitIconButton(
+                        icon = OrbitIcons.Play,
+                        contentDescription = "Resume",
+                        onClick = onResume,
+                        size = OrbitButtonSize.Small,
+                    )
                 DownloadStatus.Failed ->
-                    OrbitIconButton(icon = OrbitIcons.Refresh, contentDescription = "Retry", onClick = onRetry, size = OrbitButtonSize.Small)
+                    OrbitIconButton(
+                        icon = OrbitIcons.Refresh,
+                        contentDescription = "Retry",
+                        onClick = onRetry,
+                        size = OrbitButtonSize.Small,
+                    )
                 DownloadStatus.Completed ->
-                    OrbitIconButton(icon = OrbitIcons.Close, contentDescription = "Remove", onClick = onRemove, size = OrbitButtonSize.Small)
+                    OrbitIconButton(
+                        icon = OrbitIcons.Close,
+                        contentDescription = "Remove",
+                        onClick = onRemove,
+                        size = OrbitButtonSize.Small,
+                    )
             }
             if (item.status != DownloadStatus.Completed) {
-                OrbitIconButton(icon = OrbitIcons.Delete, contentDescription = "Cancel", onClick = onCancel, size = OrbitButtonSize.Small)
+                OrbitIconButton(
+                    icon = OrbitIcons.Delete,
+                    contentDescription = "Cancel",
+                    onClick = onCancel,
+                    size = OrbitButtonSize.Small,
+                )
             }
         }
         if (item.status != DownloadStatus.Completed) {
@@ -213,18 +254,24 @@ internal fun DownloadRow(
             }
         }
         Row(
-            modifier = Modifier.fillMaxWidth().padding(top = OrbitTheme.spacing.md),
+            modifier = Modifier.fillMaxWidth().padding(top = OrbitTheme.spacing.sm),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
         ) {
             OrbitBadge(statusLabel(item), tone = tone, showDot = true)
             if (item.isSegmented && item.status == DownloadStatus.Running) {
-                OrbitBadge(text = "${item.segments.size} connections", tone = OrbitTone.Info)
+                OrbitBadge("${item.segments.size} connections", tone = OrbitTone.Info)
             }
             Box(Modifier.weight(1f))
             val error = item.errorMessage
             if (error != null && item.status == DownloadStatus.Failed) {
-                OrbitText(text = error, style = OrbitTheme.typography.caption, color = OrbitTheme.colors.error, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                OrbitText(
+                    text = error,
+                    style = OrbitTheme.typography.caption,
+                    color = OrbitTheme.colors.error,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }
@@ -233,7 +280,12 @@ internal fun DownloadRow(
 @Composable
 internal fun SavedRow(item: DownloadItem) {
     Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xxs)) {
-        OrbitText(text = item.title, style = OrbitTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        OrbitText(
+            text = item.title,
+            style = OrbitTheme.typography.bodySmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
         OrbitText(
             text = item.savedLocation ?: formatBytes(item.downloadedBytes),
             style = OrbitTheme.typography.caption,
@@ -259,7 +311,9 @@ internal fun statusLine(item: DownloadItem): String {
         DownloadStatus.Completed -> item.savedLocation ?: "Saved · $done"
         DownloadStatus.Running -> buildString {
             append("$done of $total")
-            if (item.speedBytesPerSecond > 0) append(" · ${DownloadService.formatSpeed(item.speedBytesPerSecond)}")
+            if (item.speedBytesPerSecond > 0) {
+                append(" · ${DownloadService.formatSpeed(item.speedBytesPerSecond)}")
+            }
             item.etaSeconds?.let { append(" · ${formatEta(it)} left") }
         }
         else -> "$done of $total"

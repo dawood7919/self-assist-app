@@ -4,13 +4,17 @@ import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
@@ -19,11 +23,12 @@ import coil.compose.SubcomposeAsyncImage
 import coil.decode.VideoFrameDecoder
 import coil.request.ImageRequest
 import com.dawood.orbit.core.designsystem.component.OrbitIcon
-import com.dawood.orbit.core.designsystem.component.OrbitIconTile
+import com.dawood.orbit.core.designsystem.component.OrbitText
 import com.dawood.orbit.core.designsystem.icon.OrbitIcons
 import com.dawood.orbit.core.designsystem.theme.OrbitTheme
 import com.dawood.orbit.tools.videodownloader.resolve.HttpClients
 import java.io.File
+import java.util.Locale
 
 @Composable
 fun VideoThumbnail(
@@ -41,23 +46,61 @@ fun VideoThumbnail(
     )
 }
 
-/** Full-width 16:9 poster for large result cards. */
+/** Full-width 16:9 poster with optional duration badge. */
 @Composable
 fun VideoThumbnailWide(
     thumbnailUrl: String?,
     localPath: String? = null,
+    durationSeconds: Long? = null,
     modifier: Modifier = Modifier,
     contentDescription: String? = null,
 ) {
-    ThumbnailImage(
-        thumbnailUrl = thumbnailUrl,
-        localPath = localPath,
-        contentDescription = contentDescription,
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .aspectRatio(16f / 9f)
             .clip(OrbitTheme.radius.shapeMd),
-    )
+    ) {
+        ThumbnailImage(
+            thumbnailUrl = thumbnailUrl,
+            localPath = localPath,
+            contentDescription = contentDescription,
+            modifier = Modifier.fillMaxSize(),
+        )
+        // Soft bottom gradient so the duration label stays readable
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)),
+                    ),
+                )
+                .padding(OrbitTheme.spacing.sm),
+        )
+        durationSeconds?.takeIf { it > 0 }?.let { sec ->
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(OrbitTheme.spacing.sm)
+                    .background(
+                        Color.Black.copy(alpha = 0.75f),
+                        shape = OrbitTheme.radius.shapeSm,
+                    )
+                    .padding(
+                        horizontal = OrbitTheme.spacing.xs,
+                        vertical = OrbitTheme.spacing.xxs,
+                    ),
+            ) {
+                OrbitText(
+                    text = formatDurationLabel(sec),
+                    style = OrbitTheme.typography.caption,
+                    color = Color.White,
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -128,4 +171,15 @@ private fun ThumbnailImage(
             }
         },
     )
+}
+
+private fun formatDurationLabel(seconds: Long): String {
+    val h = seconds / 3600
+    val m = (seconds % 3600) / 60
+    val s = seconds % 60
+    return if (h > 0) {
+        String.format(Locale.US, "%d:%02d:%02d", h, m, s)
+    } else {
+        String.format(Locale.US, "%d:%02d", m, s)
+    }
 }
