@@ -8,15 +8,15 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-/**
- * Talks to the VPS control API (nginx /api/… → CDP → Chromium).
- */
+/** Talks to the VPS control API (nginx /api/… → CDP → Chromium). */
 class CloudBrowserApi(
     private val settings: CloudBrowserSettings,
 ) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
+        .writeTimeout(8, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .build()
 
     private fun authHeader(): String =
@@ -52,15 +52,57 @@ class CloudBrowserApi(
         }
     }
 
-    fun navigate(rawUrl: String): ActionResult = post("/api/navigate", JSONObject().put("url", rawUrl))
+    fun layout(): LayoutResult {
+        val request = Request.Builder()
+            .url(url("/api/layout"))
+            .header("Authorization", authHeader())
+            .get()
+            .build()
+        return try {
+            client.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                val json = runCatching { JSONObject(body) }.getOrNull()
+                LayoutResult(
+                    ok = response.isSuccessful && (json?.optBoolean("ok") != false),
+                    width = json?.optDouble("viewportWidth")?.toFloat()
+                        ?: json?.optDouble("width")?.toFloat()
+                        ?: 1280f,
+                    height = json?.optDouble("viewportHeight")?.toFloat()
+                        ?: json?.optDouble("height")?.toFloat()
+                        ?: 720f,
+                    error = json?.optString("error")?.takeIf { it.isNotBlank() },
+                )
+            }
+        } catch (e: Exception) {
+            LayoutResult(ok = false, width = 1280f, height = 720f, error = e.message)
+        }
+    }
+
+    fun navigate(rawUrl: String): ActionResult =
+        post("/api/navigate", JSONObject().put("url", rawUrl))
 
     fun back(): ActionResult = post("/api/back")
-
     fun forward(): ActionResult = post("/api/forward")
-
     fun reload(): ActionResult = post("/api/reload")
-
     fun home(): ActionResult = post("/api/home")
+
+    fun mouse(
+        type: String,
+        x: Float,
+        y: Float,
+        button: String = "left",
+        deltaX: Float = 0f,
+        deltaY: Float = 0f,
+    ): ActionResult {
+        val body = JSONObject()
+            .put("type", type)
+            .put("x", x.toDouble())
+            .put("y", y.toDouble())
+            .put("button", button)
+            .put("deltaX", deltaX.toDouble())
+            .put("deltaY", deltaY.toDouble())
+        return post("/api/mouse", body)
+    }
 
     private fun post(path: String, body: JSONObject = JSONObject()): ActionResult {
         val request = Request.Builder()
@@ -96,6 +138,13 @@ class CloudBrowserApi(
     data class ActionResult(
         val ok: Boolean,
         val url: String? = null,
+        val error: String? = null,
+    )
+
+    data class LayoutResult(
+        val ok: Boolean,
+        val width: Float,
+        val height: Float,
         val error: String? = null,
     )
 
