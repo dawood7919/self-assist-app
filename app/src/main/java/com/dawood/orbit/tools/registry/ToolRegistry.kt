@@ -30,6 +30,7 @@ object ToolRegistry {
         const val PDF_MERGE = "pdf-merge"
         const val COURSE_ROADMAP = "course-roadmap"
         const val VIDEO_DOWNLOADER = "video-downloader"
+        const val CLOUD_BROWSER = "cloud-browser"
         const val CALCULATOR = "calculator"
         const val UNIT_CONVERTER = "unit-converter"
         const val CONCRETE = "concrete-calculator"
@@ -244,6 +245,18 @@ object ToolRegistry {
             tags = listOf(
                 "video", "download", "offline", "media", "youtube",
                 "playlist", "soundcloud", "peertube", "batch",
+            ),
+            hasWorkspace = true,
+        ),
+        Tool(
+            id = Ids.CLOUD_BROWSER,
+            name = "Cloud Browser",
+            description = "Chromium on your VPS — browse with the server IP",
+            icon = OrbitIcons.OpenExternal,
+            categoryId = Categories.MEDIA,
+            tags = listOf(
+                "browser", "cloud", "vps", "remote", "chromium",
+                "web", "proxy", "novnc",
             ),
             hasWorkspace = true,
         ),

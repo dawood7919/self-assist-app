@@ -29,6 +29,7 @@ import com.dawood.orbit.tools.ai.DocumentAnalysisTool
 import com.dawood.orbit.tools.audio.AudioExtractTool
 import com.dawood.orbit.tools.bookmarks.BookmarksTool
 import com.dawood.orbit.tools.clipboard.ClipboardTool
+import com.dawood.orbit.tools.cloudbrowser.CloudBrowserTool
 import com.dawood.orbit.tools.codes.BarcodeTool
 import com.dawood.orbit.tools.convert.ConverterTool
 import com.dawood.orbit.tools.files.FileManagerTool
@@ -218,6 +219,7 @@ private fun ToolWorkspaceHost(
         ToolRegistry.Ids.OCR -> ScanToTextTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.COURSE_ROADMAP -> CourseRoadmapTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.VIDEO_DOWNLOADER -> VideoDownloaderTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.CLOUD_BROWSER -> CloudBrowserTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.CALCULATOR -> CalculatorTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.UNIT_CONVERTER -> UnitConverterTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.CONCRETE -> ConcreteCalculatorTool(tool = tool, onBack = onBack)
