@@ -72,7 +72,7 @@ fun CloudBrowserTool(
 ) {
     val context = LocalContext.current
     val browserSettings = remember { CloudBrowserSettings.get(context) }
-    val api = remember(browserSettings.host, browserSettings.port) { CloudBrowserApi(browserSettings) }
+    val api = remember { CloudBrowserApi(browserSettings) }
     val scope = rememberCoroutineScope()
     val keyboard = LocalSoftwareKeyboardController.current
 
@@ -105,7 +105,6 @@ fun CloudBrowserTool(
         }
     }
 
-    // Poll current page URL from CDP so the address bar stays in sync.
     LaunchedEffect(reloadToken, status) {
         if (status != ConnectionStatus.Connected) return@LaunchedEffect
         while (isActive) {
@@ -148,7 +147,7 @@ fun CloudBrowserTool(
             )
         },
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
+        Column(Modifier = Modifier.fillMaxSize()) {
             StatusBar(status = status, message = statusMessage)
 
             BrowserToolbar(
@@ -159,7 +158,7 @@ fun CloudBrowserTool(
                     keyboard?.hide()
                     runAction { api.navigate(address) }
                 },
-                onBack = { runAction { api.back() } },
+                onBackNav = { runAction { api.back() } },
                 onForward = { runAction { api.forward() } },
                 onReload = { runAction { api.reload() } },
                 onHome = { runAction { api.home() } },
@@ -234,9 +233,9 @@ private fun StatusBar(status: ConnectionStatus, message: String) {
         )
         OrbitText(
             text = message,
+            modifier = Modifier.weight(1f),
             style = OrbitTheme.typography.caption,
             color = OrbitTheme.colors.textMuted,
-            modifier = Modifier.weight(1f),
         )
     }
 }
@@ -247,77 +246,76 @@ private fun BrowserToolbar(
     onAddressChange: (String) -> Unit,
     enabled: Boolean,
     onSubmit: () -> Unit,
-    onBack: () -> Unit,
+    onBackNav: () -> Unit,
     onForward: () -> Unit,
     onReload: () -> Unit,
     onHome: () -> Unit,
 ) {
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(OrbitTheme.colors.surface)
             .padding(horizontal = OrbitTheme.spacing.sm, vertical = OrbitTheme.spacing.xs),
-        verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            OrbitIconButton(
-                icon = OrbitIcons.Back,
-                contentDescription = "Back",
-                onClick = onBack,
-                enabled = enabled,
-            )
-            OrbitIconButton(
-                icon = OrbitIcons.Forward,
-                contentDescription = "Forward",
-                onClick = onForward,
-                enabled = enabled,
-            )
-            BasicTextField(
-                value = address,
-                onValueChange = onAddressChange,
-                singleLine = true,
-                enabled = enabled,
-                textStyle = OrbitTheme.typography.body.copy(color = OrbitTheme.colors.textPrimary),
-                cursorBrush = SolidColor(OrbitTheme.colors.accent),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Uri,
-                    imeAction = ImeAction.Go,
-                ),
-                keyboardActions = KeyboardActions(onGo = { onSubmit() }),
-                modifier = Modifier
-                    .weight(1f)
-                    .background(OrbitTheme.colors.surfaceSunken, OrbitTheme.radius.md)
-                    .padding(horizontal = OrbitTheme.spacing.sm, vertical = OrbitTheme.spacing.xs),
-                decorationBox = { inner ->
-                    Box {
-                        if (address.isEmpty()) {
-                            OrbitText(
-                                "Search or enter URL",
-                                style = OrbitTheme.typography.body,
-                                color = OrbitTheme.colors.textPlaceholder,
-                            )
-                        }
-                        inner()
+        OrbitIconButton(
+            icon = OrbitIcons.Back,
+            contentDescription = "Back",
+            onClick = onBackNav,
+            enabled = enabled,
+            size = OrbitButtonSize.Small,
+        )
+        OrbitIconButton(
+            icon = OrbitIcons.Forward,
+            contentDescription = "Forward",
+            onClick = onForward,
+            enabled = enabled,
+            size = OrbitButtonSize.Small,
+        )
+        BasicTextField(
+            value = address,
+            onValueChange = onAddressChange,
+            singleLine = true,
+            enabled = enabled,
+            textStyle = OrbitTheme.typography.body.copy(color = OrbitTheme.colors.textPrimary),
+            cursorBrush = SolidColor(OrbitTheme.colors.accent),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Uri,
+                imeAction = ImeAction.Go,
+            ),
+            keyboardActions = KeyboardActions(onGo = { onSubmit() }),
+            modifier = Modifier
+                .weight(1f)
+                .background(OrbitTheme.colors.surfaceSunken, OrbitTheme.radius.shapeMd)
+                .padding(horizontal = OrbitTheme.spacing.sm, vertical = OrbitTheme.spacing.xs),
+            decorationBox = { inner ->
+                Box {
+                    if (address.isEmpty()) {
+                        OrbitText(
+                            text = "Search or enter URL",
+                            style = OrbitTheme.typography.body,
+                            color = OrbitTheme.colors.textPlaceholder,
+                        )
                     }
-                },
-            )
-            OrbitIconButton(
-                icon = OrbitIcons.Refresh,
-                contentDescription = "Reload",
-                onClick = onReload,
-                enabled = enabled,
-            )
-            OrbitIconButton(
-                icon = OrbitIcons.Home,
-                contentDescription = "Home",
-                onClick = onHome,
-                enabled = enabled,
-            )
-        }
+                    inner()
+                }
+            },
+        )
+        OrbitIconButton(
+            icon = OrbitIcons.Refresh,
+            contentDescription = "Reload",
+            onClick = onReload,
+            enabled = enabled,
+            size = OrbitButtonSize.Small,
+        )
+        OrbitIconButton(
+            icon = OrbitIcons.Home,
+            contentDescription = "Home",
+            onClick = onHome,
+            enabled = enabled,
+            size = OrbitButtonSize.Small,
+        )
     }
 }
 
@@ -337,13 +335,10 @@ private fun ServerSettingsPanel(
             .fillMaxWidth()
             .padding(OrbitTheme.spacing.md),
     ) {
-        Column(
-            modifier = Modifier.padding(OrbitTheme.spacing.md),
-            verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
-        ) {
-            OrbitText("VPS connection", style = OrbitTheme.typography.h4)
+        Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
+            OrbitText(text = "VPS connection", style = OrbitTheme.typography.h4)
             OrbitText(
-                "Chromium runs on the server. The phone only streams the screen.",
+                text = "Chromium runs on the server. The phone only streams the screen.",
                 style = OrbitTheme.typography.caption,
                 color = OrbitTheme.colors.textMuted,
             )
@@ -398,7 +393,11 @@ private fun SettingField(
     isPassword: Boolean = false,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        OrbitText(label, style = OrbitTheme.typography.caption, color = OrbitTheme.colors.textMuted)
+        OrbitText(
+            text = label,
+            style = OrbitTheme.typography.caption,
+            color = OrbitTheme.colors.textMuted,
+        )
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
@@ -409,7 +408,7 @@ private fun SettingField(
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = ImeAction.Next),
             modifier = Modifier
                 .fillMaxWidth()
-                .background(OrbitTheme.colors.surfaceElevated, OrbitTheme.radius.md)
+                .background(OrbitTheme.colors.surfaceElevated, OrbitTheme.radius.shapeMd)
                 .padding(OrbitTheme.spacing.sm),
         )
     }
@@ -434,9 +433,9 @@ private fun ErrorOverlay(message: String, onRetry: () -> Unit) {
                 size = 40.dp,
                 tint = OrbitTheme.colors.error,
             )
-            OrbitText("Unable to reach VPS", style = OrbitTheme.typography.h3)
+            OrbitText(text = "Unable to reach VPS", style = OrbitTheme.typography.h3)
             OrbitText(
-                message,
+                text = message,
                 style = OrbitTheme.typography.body,
                 color = OrbitTheme.colors.textMuted,
             )
