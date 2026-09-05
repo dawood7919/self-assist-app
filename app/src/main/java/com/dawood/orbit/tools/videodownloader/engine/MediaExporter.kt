@@ -9,22 +9,23 @@ import androidx.annotation.RequiresApi
 import java.io.File
 
 /**
- * Moves a finished download out of the app's private working directory and
- * into somewhere the user can actually find it.
+ * Publishes a finished part-file into shared storage.
  *
- * Downloading straight into shared storage would mean holding a storage
- * permission for the whole transfer and dealing with a half-written file being
- * visible in the gallery, so the bytes land privately first and are published
- * once, at the end.
+ * [relativeSubfolder] is under the public Downloads tree, e.g. "Orbit/My Playlist".
  */
 internal object MediaExporter {
 
-    /** Returns a human-readable location, or null when the export failed. */
-    fun export(context: Context, partFile: File, fileName: String, mimeType: String): String? =
+    fun export(
+        context: Context,
+        partFile: File,
+        fileName: String,
+        mimeType: String,
+        relativeSubfolder: String = "Orbit",
+    ): String? =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            exportToMediaStore(context, partFile, fileName, mimeType)
+            exportToMediaStore(context, partFile, fileName, mimeType, relativeSubfolder)
         } else {
-            exportToAppMediaDir(context, partFile, fileName)
+            exportToAppMediaDir(context, partFile, fileName, relativeSubfolder)
         }
 
     @RequiresApi(Build.VERSION_CODES.Q)
@@ -33,11 +34,15 @@ internal object MediaExporter {
         partFile: File,
         fileName: String,
         mimeType: String,
+        relativeSubfolder: String,
     ): String? = runCatching {
         val resolver = context.contentResolver
+        val folder = relativeSubfolder.trim('/').ifBlank { "Orbit" }
+        val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/$folder/"
         val pending = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, fileName)
             put(MediaStore.Downloads.MIME_TYPE, mimeType)
+            put(MediaStore.Downloads.RELATIVE_PATH, relativePath)
             put(MediaStore.Downloads.IS_PENDING, 1)
         }
         val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, pending)
@@ -54,29 +59,27 @@ internal object MediaExporter {
             null,
         )
         partFile.delete()
-        "Downloads/$fileName"
+        "Downloads/$folder/$fileName"
     }.getOrNull()
 
-    /**
-     * Android 8 and 9 would need a storage permission to write the shared
-     * Downloads folder, so on those versions the file stays in the app's own
-     * media directory and is shared from there instead.
-     */
-    private fun exportToAppMediaDir(context: Context, partFile: File, fileName: String): String? =
-        runCatching {
-            val target = File(
-                context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
-                    ?: context.filesDir,
-                fileName,
-            )
-            target.parentFile?.mkdirs()
-            if (target.exists()) target.delete()
-            if (!partFile.renameTo(target)) {
-                partFile.copyTo(target, overwrite = true)
-                partFile.delete()
-            }
-            target.absolutePath
-        }.getOrNull()
+    private fun exportToAppMediaDir(
+        context: Context,
+        partFile: File,
+        fileName: String,
+        relativeSubfolder: String,
+    ): String? = runCatching {
+        val root = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
+            ?: context.filesDir
+        val dir = File(root, relativeSubfolder.trim('/').ifBlank { "Orbit" })
+        dir.mkdirs()
+        val target = File(dir, fileName)
+        if (target.exists()) target.delete()
+        if (!partFile.renameTo(target)) {
+            partFile.copyTo(target, overwrite = true)
+            partFile.delete()
+        }
+        target.absolutePath
+    }.getOrNull()
 
     private const val DEFAULT_BUFFER_SIZE = 64 * 1024
 }
