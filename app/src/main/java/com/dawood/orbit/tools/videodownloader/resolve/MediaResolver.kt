@@ -25,6 +25,10 @@ data class ResolvedMedia(
     val thumbnailUrl: String? = null,
     val qualityLabel: String? = null,
     val serviceName: String? = null,
+    /** When set, [mediaUrl] is video-only and this audio track is used for playback merge. */
+    val audioUrl: String? = null,
+    /** True when the stream has no audio track in the same file. */
+    val videoOnly: Boolean = false,
 )
 
 data class PlaylistEntry(
@@ -52,14 +56,6 @@ sealed interface ResolveResult {
     data class Failure(val reason: String) : ResolveResult
 }
 
-/**
- * Turns a pasted link into media, a playlist, or a listing of video pages.
- *
- * For ordinary sites (tube networks, blogs, …):
- *  1. Direct media on the page
- *  2. Same-site links that look like video pages → shown as a checklist
- *  3. Follow those child pages on demand when the user picks them
- */
 class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
 
     suspend fun resolve(rawUrl: String): ResolveResult = withContext(Dispatchers.IO) {
@@ -111,10 +107,6 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
         }
     }
 
-    /**
-     * Resolve one playlist / listing entry. Extractor hosts go through NewPipe;
-     * everything else is a full page resolve so tube network pages work.
-     */
     suspend fun resolvePlaylistEntry(entryUrl: String): ResolveResult = withContext(Dispatchers.IO) {
         val url = normalise(entryUrl)
             ?: return@withContext ResolveResult.Failure("Invalid entry link.")
@@ -125,12 +117,11 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
                 is StreamExtractor.Outcome.Playlist -> return@withContext ResolveResult.Failure(
                     "That entry resolved to another playlist.",
                 )
-                is StreamExtractor.Outcome.NotSupported -> { /* fall through */ }
-                is StreamExtractor.Outcome.Failed -> { /* fall through */ }
+                is StreamExtractor.Outcome.NotSupported -> { }
+                is StreamExtractor.Outcome.Failed -> { }
             }
         }
 
-        // Generic page (tube site video page, etc.)
         when (val page = resolveFromPage(url)) {
             is ResolveResult.Success -> page
             is ResolveResult.Playlist -> ResolveResult.Failure(
@@ -139,8 +130,6 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
             is ResolveResult.Failure -> page
         }
     }
-
-    // ── Page parsing ────────────────────────────────────────────────────────
 
     private suspend fun resolveFromPage(pageUrl: String): ResolveResult {
         val html = runCatching { fetchHtml(pageUrl) }.getOrElse { error ->
@@ -184,11 +173,8 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
             }
             .sortedByDescending { it.sizeBytes }
 
-        if (media.isNotEmpty()) {
-            return ResolveResult.Success(media)
-        }
+        if (media.isNotEmpty()) return ResolveResult.Success(media)
 
-        // No direct file — look for a listing of video pages on this site.
         val listing = collectVideoPageLinks(document, pageUrl)
         if (listing.isNotEmpty()) {
             return ResolveResult.Playlist(
@@ -209,25 +195,16 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
                 "That page streams over HLS (.m3u8). Saving it means downloading and " +
                     "joining hundreds of segments, which this build does not do yet.",
             )
-
             candidates.isNotEmpty() -> ResolveResult.Failure(
                 "Found media links on that page, but none of them could be downloaded.",
             )
-
-            else -> {
-                val services = StreamExtractor.supportedServices().joinToString()
-                ResolveResult.Failure(
-                    "No downloadable media or video list was found on that page. " +
-                        "Signed hosts that work: $services.",
-                )
-            }
+            else -> ResolveResult.Failure(
+                "No downloadable media or video list was found on that page. " +
+                    "Signed hosts that work: ${StreamExtractor.supportedServices().joinToString()}.",
+            )
         }
     }
 
-    /**
-     * Same-site anchors that look like individual video pages.
-     * Used for network / category / search listings.
-     */
     private fun collectVideoPageLinks(
         document: org.jsoup.nodes.Document,
         pageUrl: String,
@@ -255,13 +232,8 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
             val thumb = anchor.selectFirst("img[src]")?.absUrl("src")
                 ?.takeIf { it.startsWith("http") }
 
-            entries += PlaylistEntry(
-                url = clean,
-                title = title,
-                thumbnailUrl = thumb,
-            )
+            entries += PlaylistEntry(url = clean, title = title, thumbnailUrl = thumb)
         }
-
         return entries
     }
 
@@ -269,7 +241,6 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
         val path = runCatching { URI(url).path.orEmpty().lowercase(Locale.ROOT) }
             .getOrDefault(url.lowercase(Locale.ROOT))
         if (path.length < 6) return false
-        // Obvious non-video paths
         val blocked = listOf(
             "/login", "/register", "/search", "/categories", "/category",
             "/tags", "/tag/", "/models", "/channels", "/network",
@@ -277,13 +248,10 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
             "/contact", "/privacy", "/terms", "/cdn-cgi", "/static",
             "/css", "/js/", "/images/", "/img/", "/fonts/",
         )
-        if (blocked.any { path.contains(it) }) {
-            // networks/mom-lover/3 is a listing — allow if it's only the listing
-            // path itself; child /videos/slug are the ones we want.
-            if (!VIDEO_PATH_HINT.any { path.contains(it) }) return false
+        if (blocked.any { path.contains(it) } && !VIDEO_PATH_HINT.any { path.contains(it) }) {
+            return false
         }
         return VIDEO_PATH_HINT.any { path.contains(it) } ||
-            // slug-like last segment: /something-long-enough-title
             path.substringAfterLast('/').let { slug ->
                 slug.length >= 12 && slug.contains('-') && !slug.contains('.')
             }
@@ -291,12 +259,10 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
 
     private fun collectCandidates(document: org.jsoup.nodes.Document, rawHtml: String): List<String> {
         val found = LinkedHashSet<String>()
-
         fun add(value: String?) {
             val trimmed = value?.trim().orEmpty()
             if (trimmed.isNotEmpty() && trimmed.startsWith("http")) found += trimmed
         }
-
         listOf(
             "meta[property=og:video:secure_url]",
             "meta[property=og:video:url]",
@@ -308,36 +274,24 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
                 add(it.absUrl("content").ifEmpty { it.attr("content") })
             }
         }
-
         document.select("video[src]").forEach { add(it.absUrl("src")) }
         document.select("video source[src], audio source[src]").forEach { add(it.absUrl("src")) }
         document.select("audio[src]").forEach { add(it.absUrl("src")) }
         document.select("iframe[src]").forEach { add(it.absUrl("src")) }
-        document.select("link[rel=alternate][type^=video]").forEach { add(it.absUrl("href")) }
-
         document.select("[data-video-src], [data-src], [data-url], [data-file], [data-mp4], [data-video]").forEach { element ->
             listOf("data-video-src", "data-src", "data-url", "data-file", "data-mp4", "data-video").forEach { attribute ->
                 val value = element.attr(attribute)
-                if (value.isNotBlank()) {
-                    add(element.absUrl(attribute).ifEmpty { value })
-                }
+                if (value.isNotBlank()) add(element.absUrl(attribute).ifEmpty { value })
             }
         }
-
         document.select("a[href]").forEach { anchor ->
             val href = anchor.absUrl("href")
-            if (MEDIA_EXTENSIONS.any { href.substringBefore('?').lowercase(Locale.ROOT).endsWith(it) }) {
-                add(href)
-            }
+            if (MEDIA_EXTENSIONS.any { href.substringBefore('?').lowercase(Locale.ROOT).endsWith(it) }) add(href)
         }
-
         JSON_MEDIA_KEY.findAll(rawHtml).forEach { match -> add(unescape(match.groupValues[1])) }
         INLINE_MEDIA_URL.findAll(rawHtml).take(80).forEach { match -> add(unescape(match.value)) }
-
         return found.toList()
     }
-
-    // ── Probing ─────────────────────────────────────────────────────────────
 
     private data class Probe(
         val finalUrl: String,
@@ -351,16 +305,13 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
                 val type = contentType?.lowercase(Locale.ROOT).orEmpty()
                 if (type.startsWith("video/") || type.startsWith("audio/")) return true
                 if (type.startsWith("text/") || type.startsWith("application/json")) return false
-                if (type.isEmpty() || type.startsWith("application/octet-stream") ||
-                    type.startsWith("binary/")
-                ) {
+                if (type.isEmpty() || type.startsWith("application/octet-stream") || type.startsWith("binary/")) {
                     return MEDIA_EXTENSIONS.any {
                         finalUrl.substringBefore('?').lowercase(Locale.ROOT).endsWith(it)
                     }
                 }
                 return false
             }
-
         val isHtml: Boolean
             get() = contentType?.lowercase(Locale.ROOT)?.startsWith("text/html") == true
     }
@@ -373,7 +324,6 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
             .apply { if (referer != null) header("Referer", referer) }
             .get()
             .build()
-
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful && response.code != 206) return null
             val contentRange = response.header("Content-Range")
@@ -410,9 +360,7 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
     }
 
     private fun Probe.toMedia(titleHint: String?, thumbnailUrl: String? = null): ResolvedMedia {
-        val name = fileNameHint
-            ?: fileNameFromUrl(finalUrl)
-            ?: defaultName(contentType)
+        val name = fileNameHint ?: fileNameFromUrl(finalUrl) ?: defaultName(contentType)
         val title = titleHint?.takeIf { it.isNotBlank() } ?: name.substringBeforeLast('.')
         return ResolvedMedia(
             mediaUrl = finalUrl,
@@ -435,11 +383,7 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
     private fun normalise(raw: String): String? {
         val trimmed = raw.trim()
         if (trimmed.isEmpty()) return null
-        val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-            trimmed
-        } else {
-            "https://$trimmed"
-        }
+        val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) trimmed else "https://$trimmed"
         return withScheme.takeIf { it.contains('.') }
     }
 
@@ -447,9 +391,7 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
         runCatching { URI(url).host?.lowercase(Locale.ROOT) }.getOrNull()
 
     private fun isHls(url: String): Boolean =
-        url.substringBefore('?').lowercase(Locale.ROOT).let {
-            it.endsWith(".m3u8") || it.endsWith(".m3u")
-        }
+        url.substringBefore('?').lowercase(Locale.ROOT).let { it.endsWith(".m3u8") || it.endsWith(".m3u") }
 
     private fun unescape(value: String): String =
         value.replace("\\/", "/").replace("&amp;", "&").trim('"', '\'', ' ')
@@ -462,13 +404,10 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
     }
 
     private fun fileNameFromUrl(url: String): String? =
-        url.substringBefore('?').substringAfterLast('/')
-            .takeIf { it.contains('.') && it.length in 2..120 }
+        url.substringBefore('?').substringAfterLast('/').takeIf { it.contains('.') && it.length in 2..120 }
 
-    private fun defaultName(contentType: String?): String = when {
-        contentType?.startsWith("audio/") == true -> "audio.m4a"
-        else -> "video.mp4"
-    }
+    private fun defaultName(contentType: String?): String =
+        if (contentType?.startsWith("audio/") == true) "audio.m4a" else "video.mp4"
 
     private fun ensureExtension(name: String, contentType: String?): String {
         if (name.contains('.')) return name
@@ -496,29 +435,22 @@ class MediaResolver(private val client: OkHttpClient = HttpClients.shared) {
         const val MAX_HTML_BYTES = 2L * 1024 * 1024
         const val MAX_PROBES = 14
         const val MAX_LISTING_ENTRIES = 80
-
         val VIDEO_PATH_HINT = listOf(
             "/videos/", "/video/", "/watch/", "/v/", "/embed/",
-            "/movie/", "/movies/", "/clip/", "/clips/", "/play/",
-            "/watch?", "/view/",
+            "/movie/", "/movies/", "/clip/", "/clips/", "/play/", "/view/",
         )
-
         val MEDIA_EXTENSIONS = listOf(
             ".mp4", ".m4v", ".webm", ".mkv", ".mov", ".avi", ".flv", ".ts",
             ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac",
         )
-
         val JSON_MEDIA_KEY = Regex(
             "\"(?:contentUrl|videoUrl|video_url|playbackUrl|file|src|source)\"\\s*:\\s*\"(https?:[^\"]{8,600})\"",
             RegexOption.IGNORE_CASE,
         )
-
         val INLINE_MEDIA_URL = Regex(
-            "https?://[^\\s\"'<>\\\\]{8,600}?\\.(?:mp4|webm|m4v|mov|mkv|m4a|mp3)" +
-                "(?:\\?[^\\s\"'<>\\\\]{0,200})?",
+            "https?://[^\\s\"'<>\\\\]{8,600}?\\.(?:mp4|webm|m4v|mov|mkv|m4a|mp3)(?:\\?[^\\s\"'<>\\\\]{0,200})?",
             RegexOption.IGNORE_CASE,
         )
-
         val DISPOSITION_NAME = Regex(
             "filename\\*?=(?:UTF-8'')?\"?([^\";]+)\"?",
             RegexOption.IGNORE_CASE,
