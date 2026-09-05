@@ -37,7 +37,7 @@ internal fun PlaylistPicker(
     onQuality: (QualityPreference) -> Unit,
     onDownloadSelected: () -> Unit,
     onPlayEntry: (PlaylistEntry) -> Unit,
-    onDownloadEntry: (PlaylistEntry) -> Unit,
+    onDownloadEntry: (PlaylistEntry) -> Unit = {},
     onFilter: (String) -> Unit,
     onMinDuration: (Long) -> Unit,
     onDismiss: () -> Unit,
@@ -266,7 +266,6 @@ private fun PlaylistEntryCard(
                     )
                 }
             }
-            // Download / Watch / Quality — one row under the title
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xs),
