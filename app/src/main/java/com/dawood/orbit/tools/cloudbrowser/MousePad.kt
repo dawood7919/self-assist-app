@@ -17,7 +17,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.awaitPointerEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -36,6 +35,10 @@ enum class MouseTool {
     Scroll,
 }
 
+/**
+ * Touch layer over the remote stream. Cursor is drawn above the finger
+ * so it stays visible. Coordinates map into Chromium via CDP.
+ */
 @Composable
 fun MousePad(
     api: CloudBrowserApi,
@@ -86,7 +89,14 @@ fun MousePad(
         }
         scope.launch {
             withContext(Dispatchers.IO) {
-                api.mouse(type = type, x = rx, y = ry, button = button, deltaX = deltaX, deltaY = deltaY)
+                api.mouse(
+                    type = type,
+                    x = rx,
+                    y = ry,
+                    button = button,
+                    deltaX = deltaX,
+                    deltaY = deltaY,
+                )
             }
         }
     }
@@ -110,19 +120,30 @@ fun MousePad(
                             }
                             var lastPos = start
                             while (true) {
+                                // awaitPointerEvent is a member of AwaitPointerEventScope
                                 val event = awaitPointerEvent()
                                 val change = event.changes.firstOrNull() ?: break
                                 if (!change.pressed) {
-                                    val endCursor = Offset(change.position.x, change.position.y - offsetYPx)
+                                    val endCursor = Offset(
+                                        change.position.x,
+                                        change.position.y - offsetYPx,
+                                    )
                                     cursor = endCursor
                                     when (tool) {
                                         MouseTool.Pointer -> {
                                             val dist = (change.position - start).getDistance()
-                                            if (dist < 18f) sendMouse("click", endCursor, button = "left")
-                                            else sendMouse("move", endCursor)
+                                            if (dist < 18f) {
+                                                sendMouse("click", endCursor, button = "left")
+                                            } else {
+                                                sendMouse("move", endCursor)
+                                            }
                                         }
-                                        MouseTool.RightClick -> sendMouse("click", endCursor, button = "right")
-                                        MouseTool.Drag -> sendMouse("up", endCursor, button = "left")
+                                        MouseTool.RightClick -> {
+                                            sendMouse("click", endCursor, button = "right")
+                                        }
+                                        MouseTool.Drag -> {
+                                            sendMouse("up", endCursor, button = "left")
+                                        }
                                         MouseTool.Scroll -> Unit
                                     }
                                     finger = null
@@ -147,13 +168,19 @@ fun MousePad(
                             }
                         }
                     }
-                } else Modifier,
+                } else {
+                    Modifier
+                },
             ),
     ) {
         Canvas(Modifier.fillMaxSize()) {
             val c = cursor
             if (c != null) {
-                drawCircle(Color.Black.copy(alpha = 0.35f), radius = 16f, center = c + Offset(2f, 3f))
+                drawCircle(
+                    color = Color.Black.copy(alpha = 0.35f),
+                    radius = 16f,
+                    center = c + Offset(2f, 3f),
+                )
                 val path = Path().apply {
                     moveTo(c.x, c.y)
                     lineTo(c.x + 14f, c.y + 12f)
@@ -164,13 +191,18 @@ fun MousePad(
                     lineTo(c.x, c.y + 18f)
                     close()
                 }
-                drawPath(path, Color.White)
-                drawPath(path, Color(0xFF1A73E8), style = Stroke(width = 2f))
-                drawCircle(Color(0xFF1A73E8), radius = 3.5f, center = c)
+                drawPath(path, color = Color.White)
+                drawPath(path, color = Color(0xFF1A73E8), style = Stroke(width = 2f))
+                drawCircle(color = Color(0xFF1A73E8), radius = 3.5f, center = c)
             }
             val f = finger
             if (f != null) {
-                drawCircle(Color.White.copy(alpha = 0.25f), radius = 22f, center = f, style = Stroke(width = 2f))
+                drawCircle(
+                    color = Color.White.copy(alpha = 0.25f),
+                    radius = 22f,
+                    center = f,
+                    style = Stroke(width = 2f),
+                )
             }
         }
     }
