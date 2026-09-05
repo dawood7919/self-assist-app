@@ -2,8 +2,10 @@ package com.dawood.orbit.tools.cloudbrowser
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
+import android.net.http.SslError
 import android.view.ViewGroup
 import android.webkit.HttpAuthHandler
+import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -73,7 +75,8 @@ fun CloudBrowserTool(
     var showSettings by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf(ConnectionStatus.Connecting) }
     var statusMessage by remember { mutableStateOf("Connecting to VPS…") }
-    var address by remember { mutableStateOf("") }
+    // Address bar is for CDP navigation only — never the stream WebView URL.
+    var address by remember { mutableStateOf("https://www.google.com") }
     var webView by remember { mutableStateOf<WebView?>(null) }
     var reloadToken by remember { mutableStateOf(0) }
     var busy by remember { mutableStateOf(false) }
@@ -85,11 +88,13 @@ fun CloudBrowserTool(
             val result = withContext(Dispatchers.IO) { block() }
             if (result.ok) {
                 result.url?.let { address = it }
-                delay(400)
+                delay(500)
                 val st = withContext(Dispatchers.IO) { api.status() }
                 if (st.ok) {
                     st.url?.let { address = it }
-                    status = ConnectionStatus.Connected
+                    if (status != ConnectionStatus.Connected) {
+                        status = ConnectionStatus.Connected
+                    }
                     statusMessage = st.title?.takeIf { it.isNotBlank() } ?: "Online · VPS Chromium"
                 }
             } else {
@@ -104,7 +109,11 @@ fun CloudBrowserTool(
         while (isActive) {
             val st = withContext(Dispatchers.IO) { api.status() }
             if (st.ok) {
-                st.url?.let { address = it }
+                // Only update address from remote page URL (http/https), never relative paths.
+                val remote = st.url
+                if (!remote.isNullOrBlank() && (remote.startsWith("http://") || remote.startsWith("https://"))) {
+                    address = remote
+                }
                 if (!st.title.isNullOrBlank()) {
                     statusMessage = st.title
                 }
@@ -131,7 +140,7 @@ fun CloudBrowserTool(
                     status = ConnectionStatus.Connecting
                     statusMessage = "Reconnecting…"
                     reloadToken++
-                    webView?.reload()
+                    webView?.loadUrl(browserSettings.baseUrl())
                 },
             )
             OrbitIconButton(
@@ -146,10 +155,14 @@ fun CloudBrowserTool(
             BrowserToolbar(
                 address = address,
                 onAddressChange = { address = it },
-                enabled = status == ConnectionStatus.Connected && !busy,
+                // Always allow typing; nav buttons need a live stream.
+                navEnabled = status == ConnectionStatus.Connected && !busy,
                 onSubmit = {
                     keyboard?.hide()
-                    runAction { api.navigate(address) }
+                    val typed = address.trim()
+                    if (typed.isNotEmpty()) {
+                        runAction { api.navigate(typed) }
+                    }
                 },
                 onBackNav = { runAction { api.back() } },
                 onForward = { runAction { api.forward() } },
@@ -190,7 +203,7 @@ fun CloudBrowserTool(
                             status = ConnectionStatus.Connecting
                             statusMessage = "Reconnecting…"
                             reloadToken++
-                            webView?.reload()
+                            webView?.loadUrl(browserSettings.baseUrl())
                         },
                     )
                 }
@@ -234,7 +247,7 @@ private fun StatusBar(status: ConnectionStatus, message: String) {
 private fun BrowserToolbar(
     address: String,
     onAddressChange: (String) -> Unit,
-    enabled: Boolean,
+    navEnabled: Boolean,
     onSubmit: () -> Unit,
     onBackNav: () -> Unit,
     onForward: () -> Unit,
@@ -253,21 +266,21 @@ private fun BrowserToolbar(
             icon = OrbitIcons.Back,
             contentDescription = "Back",
             onClick = onBackNav,
-            enabled = enabled,
+            enabled = navEnabled,
             size = OrbitButtonSize.Small,
         )
         OrbitIconButton(
             icon = OrbitIcons.Forward,
             contentDescription = "Forward",
             onClick = onForward,
-            enabled = enabled,
+            enabled = navEnabled,
             size = OrbitButtonSize.Small,
         )
         BasicTextField(
             value = address,
             onValueChange = onAddressChange,
             singleLine = true,
-            enabled = enabled,
+            enabled = true,
             textStyle = OrbitTheme.typography.body.copy(color = OrbitTheme.colors.textPrimary),
             cursorBrush = SolidColor(OrbitTheme.colors.accent),
             keyboardOptions = KeyboardOptions(
@@ -296,14 +309,14 @@ private fun BrowserToolbar(
             icon = OrbitIcons.Refresh,
             contentDescription = "Reload",
             onClick = onReload,
-            enabled = enabled,
+            enabled = navEnabled,
             size = OrbitButtonSize.Small,
         )
         OrbitIconButton(
             icon = OrbitIcons.Home,
             contentDescription = "Home",
             onClick = onHome,
-            enabled = enabled,
+            enabled = navEnabled,
             size = OrbitButtonSize.Small,
         )
     }
@@ -319,6 +332,7 @@ private fun ServerSettingsPanel(
     var port by remember { mutableStateOf(settings.port.toString()) }
     var user by remember { mutableStateOf(settings.username) }
     var pass by remember { mutableStateOf(settings.password) }
+    var https by remember { mutableStateOf(settings.useHttps) }
 
     OrbitCard(
         Modifier
@@ -328,7 +342,7 @@ private fun ServerSettingsPanel(
         Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
             OrbitText(text = "VPS connection", style = OrbitTheme.typography.h4)
             OrbitText(
-                text = "Chromium runs on the server. The phone only streams the screen.",
+                text = "Use HTTPS (port 8443). Selkies needs a secure connection.",
                 style = OrbitTheme.typography.caption,
                 color = OrbitTheme.colors.textMuted,
             )
@@ -348,6 +362,19 @@ private fun ServerSettingsPanel(
             )
             Row(
                 Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                OrbitText(text = "Use HTTPS", style = OrbitTheme.typography.body)
+                OrbitButton(
+                    text = if (https) "On" else "Off",
+                    onClick = { https = !https },
+                    variant = if (https) OrbitButtonVariant.Primary else OrbitButtonVariant.Secondary,
+                    size = OrbitButtonSize.Small,
+                )
+            }
+            Row(
+                Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
             ) {
                 OrbitButton(
@@ -364,6 +391,7 @@ private fun ServerSettingsPanel(
                         settings.port = port.toIntOrNull() ?: CloudBrowserSettings.DEFAULT_PORT
                         settings.username = user
                         settings.password = pass
+                        settings.useHttps = https
                         onSave()
                     },
                     size = OrbitButtonSize.Small,
@@ -434,7 +462,7 @@ private fun ErrorOverlay(message: String, onRetry: () -> Unit) {
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled")
+@SuppressLint("SetJavaScriptEnabled", "WebViewClientOnReceivedSslError")
 @Composable
 private fun RemoteBrowserView(
     browserSettings: CloudBrowserSettings,
@@ -442,11 +470,12 @@ private fun RemoteBrowserView(
     onStatus: (ConnectionStatus, String) -> Unit,
     onWebViewReady: (WebView) -> Unit,
 ) {
-    val url = remember(reloadToken, browserSettings.host, browserSettings.port) {
+    val streamUrl = remember(reloadToken, browserSettings.host, browserSettings.port, browserSettings.useHttps) {
         browserSettings.baseUrl()
     }
     val user = browserSettings.username
     val pass = browserSettings.password
+    val expectedHost = browserSettings.host
 
     AndroidView(
         factory = { ctx ->
@@ -458,7 +487,7 @@ private fun RemoteBrowserView(
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.mediaPlaybackRequiresUserGesture = false
-                settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 settings.loadWithOverviewMode = true
                 settings.useWideViewPort = true
                 settings.builtInZoomControls = false
@@ -475,6 +504,20 @@ private fun RemoteBrowserView(
                         realm: String?,
                     ) {
                         handler?.proceed(user, pass)
+                    }
+
+                    override fun onReceivedSslError(
+                        view: WebView?,
+                        handler: SslErrorHandler?,
+                        error: SslError?,
+                    ) {
+                        // Trust only our VPS self-signed certificate.
+                        val url = error?.url.orEmpty()
+                        if (url.contains(expectedHost)) {
+                            handler?.proceed()
+                        } else {
+                            handler?.cancel()
+                        }
                     }
 
                     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -499,13 +542,14 @@ private fun RemoteBrowserView(
                     }
                 }
                 onWebViewReady(this)
-                loadUrl(url)
+                loadUrl(streamUrl)
             }
         },
         update = { view ->
             val current = view.url.orEmpty()
-            if (reloadToken > 0 && !current.startsWith(url.trimEnd('/'))) {
-                view.loadUrl(url)
+            // Reload stream only when reconnect token forces a new base URL.
+            if (reloadToken > 0 && !current.startsWith(streamUrl.trimEnd('/'))) {
+                view.loadUrl(streamUrl)
             }
         },
         modifier = Modifier.fillMaxSize(),
