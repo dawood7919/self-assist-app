@@ -15,9 +15,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.dawood.orbit.core.designsystem.component.OrbitCard
@@ -40,6 +45,11 @@ import com.dawood.orbit.core.layout.LocalOrbitWindow
 import com.dawood.orbit.core.layout.OrbitContentContainer
 import com.dawood.orbit.core.layout.contentPadding
 import com.dawood.orbit.core.layout.sectionSpacing
+import com.dawood.orbit.update.AppUpdateManager
+import com.dawood.orbit.update.UpdateResult
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Appearance lives here, and changing it repaints the whole product because
@@ -57,6 +67,17 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     val window = LocalOrbitWindow.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val updater = remember { AppUpdateManager.get(context) }
+    var autoUpdate by remember { mutableStateOf(updater.autoUpdateEnabled) }
+    var updateStatus by remember {
+        mutableStateOf(
+            "Version ${updater.currentVersionName()} (build ${updater.currentVersionCode()})",
+        )
+    }
+    var checking by remember { mutableStateOf(false) }
+
     val themeOptions = listOf("System", "Light", "Dark")
     val themeIndex = when (themeMode) {
         ThemeMode.System -> 0
@@ -142,6 +163,92 @@ fun SettingsScreen(
             }
         }
 
+        item("updates") {
+            OrbitContentContainer {
+                SettingsGroup(title = "Updates") {
+                    OrbitSettingRow(
+                        title = "Auto-update in background",
+                        description = "Check GitHub every 12h and download new builds silently",
+                        leading = {
+                            OrbitIconTile(
+                                icon = OrbitIcons.Download,
+                                size = 36.dp,
+                                iconSize = OrbitTheme.sizes.iconMd,
+                            )
+                        },
+                        trailing = {
+                            OrbitSwitch(
+                                checked = autoUpdate,
+                                onCheckedChange = {
+                                    autoUpdate = it
+                                    updater.autoUpdateEnabled = it
+                                },
+                            )
+                        },
+                    )
+                    OrbitDivider()
+                    OrbitSettingRow(
+                        title = if (checking) "Checking…" else "Check for update now",
+                        description = updateStatus,
+                        onClick = {
+                            if (checking) return@OrbitSettingRow
+                            checking = true
+                            updateStatus = "Checking GitHub Releases…"
+                            scope.launch {
+                                val result = withContext(Dispatchers.IO) {
+                                    updater.checkAndMaybeDownload(forceDownload = true)
+                                }
+                                updateStatus = when (result) {
+                                    is UpdateResult.UpToDate ->
+                                        "Up to date · build ${result.local} (${result.tag})"
+                                    is UpdateResult.Available ->
+                                        if (result.downloaded) {
+                                            "Build ${result.release.versionCode} downloaded — install from notification"
+                                        } else {
+                                            "Build ${result.release.versionCode} available"
+                                        }
+                                    is UpdateResult.Error -> result.message
+                                }
+                                if (result is UpdateResult.Available && result.downloaded) {
+                                    updater.installPendingApk()
+                                }
+                                checking = false
+                            }
+                        },
+                        leading = {
+                            OrbitIconTile(
+                                icon = OrbitIcons.Refresh,
+                                size = 36.dp,
+                                iconSize = OrbitTheme.sizes.iconMd,
+                            )
+                        },
+                        trailing = {
+                            OrbitIcon(
+                                icon = OrbitIcons.ChevronRight,
+                                contentDescription = null,
+                                tint = OrbitTheme.colors.textMuted,
+                            )
+                        },
+                    )
+                    if (updater.hasPendingApk()) {
+                        OrbitDivider()
+                        OrbitSettingRow(
+                            title = "Install downloaded update",
+                            description = "Open the system installer for the pending APK",
+                            onClick = { updater.installPendingApk() },
+                            leading = {
+                                OrbitIconTile(
+                                    icon = OrbitIcons.Download,
+                                    size = 36.dp,
+                                    iconSize = OrbitTheme.sizes.iconMd,
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+        }
+
         item("shortcuts") {
             OrbitContentContainer {
                 SettingsGroup(title = "Keyboard") {
@@ -197,7 +304,7 @@ fun SettingsScreen(
                 SettingsGroup(title = "About") {
                     OrbitSettingRow(
                         title = "Orbit",
-                        description = "Personal assistant hub · UI foundation 0.1.0",
+                        description = "Personal assistant hub · ${updater.currentVersionName()} · build ${updater.currentVersionCode()}",
                         leading = {
                             OrbitIconTile(
                                 icon = OrbitIcons.Widgets,

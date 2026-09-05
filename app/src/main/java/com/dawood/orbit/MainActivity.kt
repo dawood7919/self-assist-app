@@ -14,12 +14,20 @@ import com.dawood.orbit.core.designsystem.component.LocalOrbitToastState
 import com.dawood.orbit.core.designsystem.component.OrbitToastState
 import com.dawood.orbit.core.designsystem.theme.OrbitTheme
 import com.dawood.orbit.feature.shell.OrbitAppShell
+import com.dawood.orbit.update.AppUpdateManager
+import com.dawood.orbit.update.UpdateScheduler
 
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+
+        // Schedule background update checks when the user left auto-update on.
+        val updater = AppUpdateManager.get(this)
+        if (updater.autoUpdateEnabled) {
+            UpdateScheduler.schedule(this)
+        }
 
         setContent {
             val appState = rememberOrbitAppState()

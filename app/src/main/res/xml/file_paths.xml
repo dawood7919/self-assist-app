@@ -4,5 +4,6 @@
 <paths>
     <files-path name="output" path="output/" />
     <cache-path name="work" path="work/" />
+    <cache-path name="updates" path="updates/" />
     <external-files-path name="media" path="." />
 </paths>

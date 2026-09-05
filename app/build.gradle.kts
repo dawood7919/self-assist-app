@@ -95,6 +95,9 @@ dependencies {
 
     implementation(libs.androidx.navigation.compose)
 
+    // Background self-update checks against GitHub Releases.
+    implementation(libs.androidx.work.runtime.ktx)
+
     // Video downloader: range-request downloads and page parsing.
     implementation(libs.okhttp)
     implementation(libs.jsoup)
