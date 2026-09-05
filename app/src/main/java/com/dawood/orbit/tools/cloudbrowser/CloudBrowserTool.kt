@@ -21,16 +21,20 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -48,12 +52,17 @@ import com.dawood.orbit.core.designsystem.icon.OrbitIcons
 import com.dawood.orbit.core.designsystem.theme.OrbitTheme
 import com.dawood.orbit.tools.model.Tool
 import com.dawood.orbit.tools.shell.ToolShell
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
- * Cloud Browser — remote Chromium running on the VPS, streamed into a WebView.
+ * Cloud Browser — remote Chromium on the VPS, streamed into a WebView.
  *
- * The phone only displays the Selkies session and forwards touch and keyboard.
- * Page rendering, networking and CPU all stay on the server.
+ * Toolbar actions call the VPS CDP control API so navigation happens on the
+ * server, not inside the phone's WebView.
  */
 @Composable
 fun CloudBrowserTool(
@@ -63,12 +72,53 @@ fun CloudBrowserTool(
 ) {
     val context = LocalContext.current
     val browserSettings = remember { CloudBrowserSettings.get(context) }
+    val api = remember(browserSettings.host, browserSettings.port) { CloudBrowserApi(browserSettings) }
+    val scope = rememberCoroutineScope()
+    val keyboard = LocalSoftwareKeyboardController.current
 
     var showSettings by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf(ConnectionStatus.Connecting) }
     var statusMessage by remember { mutableStateOf("Connecting to VPS…") }
+    var address by remember { mutableStateOf("") }
     var webView by remember { mutableStateOf<WebView?>(null) }
     var reloadToken by remember { mutableStateOf(0) }
+    var busy by remember { mutableStateOf(false) }
+
+    fun runAction(block: () -> CloudBrowserApi.ActionResult) {
+        if (busy) return
+        busy = true
+        scope.launch {
+            val result = withContext(Dispatchers.IO) { block() }
+            if (result.ok) {
+                result.url?.let { address = it }
+                delay(400)
+                val st = withContext(Dispatchers.IO) { api.status() }
+                if (st.ok) {
+                    st.url?.let { address = it }
+                    status = ConnectionStatus.Connected
+                    statusMessage = st.title?.takeIf { it.isNotBlank() } ?: "Online · VPS Chromium"
+                }
+            } else {
+                statusMessage = result.error ?: "Action failed"
+            }
+            busy = false
+        }
+    }
+
+    // Poll current page URL from CDP so the address bar stays in sync.
+    LaunchedEffect(reloadToken, status) {
+        if (status != ConnectionStatus.Connected) return@LaunchedEffect
+        while (isActive) {
+            val st = withContext(Dispatchers.IO) { api.status() }
+            if (st.ok) {
+                st.url?.let { address = it }
+                if (!st.title.isNullOrBlank()) {
+                    statusMessage = st.title
+                }
+            }
+            delay(2500)
+        }
+    }
 
     BackHandler {
         val wv = webView
@@ -83,7 +133,7 @@ fun CloudBrowserTool(
         actions = {
             OrbitIconButton(
                 icon = OrbitIcons.Refresh,
-                contentDescription = "Reconnect",
+                contentDescription = "Reconnect stream",
                 onClick = {
                     status = ConnectionStatus.Connecting
                     statusMessage = "Reconnecting…"
@@ -98,8 +148,22 @@ fun CloudBrowserTool(
             )
         },
     ) {
-        Column(Modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
             StatusBar(status = status, message = statusMessage)
+
+            BrowserToolbar(
+                address = address,
+                onAddressChange = { address = it },
+                enabled = status == ConnectionStatus.Connected && !busy,
+                onSubmit = {
+                    keyboard?.hide()
+                    runAction { api.navigate(address) }
+                },
+                onBack = { runAction { api.back() } },
+                onForward = { runAction { api.forward() } },
+                onReload = { runAction { api.reload() } },
+                onHome = { runAction { api.home() } },
+            )
 
             if (showSettings) {
                 ServerSettingsPanel(
@@ -174,6 +238,86 @@ private fun StatusBar(status: ConnectionStatus, message: String) {
             color = OrbitTheme.colors.textMuted,
             modifier = Modifier.weight(1f),
         )
+    }
+}
+
+@Composable
+private fun BrowserToolbar(
+    address: String,
+    onAddressChange: (String) -> Unit,
+    enabled: Boolean,
+    onSubmit: () -> Unit,
+    onBack: () -> Unit,
+    onForward: () -> Unit,
+    onReload: () -> Unit,
+    onHome: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(OrbitTheme.colors.surface)
+            .padding(horizontal = OrbitTheme.spacing.sm, vertical = OrbitTheme.spacing.xs),
+        verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xs),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            OrbitIconButton(
+                icon = OrbitIcons.Back,
+                contentDescription = "Back",
+                onClick = onBack,
+                enabled = enabled,
+            )
+            OrbitIconButton(
+                icon = OrbitIcons.Forward,
+                contentDescription = "Forward",
+                onClick = onForward,
+                enabled = enabled,
+            )
+            BasicTextField(
+                value = address,
+                onValueChange = onAddressChange,
+                singleLine = true,
+                enabled = enabled,
+                textStyle = OrbitTheme.typography.body.copy(color = OrbitTheme.colors.textPrimary),
+                cursorBrush = SolidColor(OrbitTheme.colors.accent),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Uri,
+                    imeAction = ImeAction.Go,
+                ),
+                keyboardActions = KeyboardActions(onGo = { onSubmit() }),
+                modifier = Modifier
+                    .weight(1f)
+                    .background(OrbitTheme.colors.surfaceSunken, OrbitTheme.radius.md)
+                    .padding(horizontal = OrbitTheme.spacing.sm, vertical = OrbitTheme.spacing.xs),
+                decorationBox = { inner ->
+                    Box {
+                        if (address.isEmpty()) {
+                            OrbitText(
+                                "Search or enter URL",
+                                style = OrbitTheme.typography.body,
+                                color = OrbitTheme.colors.textPlaceholder,
+                            )
+                        }
+                        inner()
+                    }
+                },
+            )
+            OrbitIconButton(
+                icon = OrbitIcons.Refresh,
+                contentDescription = "Reload",
+                onClick = onReload,
+                enabled = enabled,
+            )
+            OrbitIconButton(
+                icon = OrbitIcons.Home,
+                contentDescription = "Home",
+                onClick = onHome,
+                enabled = enabled,
+            )
+        }
     }
 }
 
