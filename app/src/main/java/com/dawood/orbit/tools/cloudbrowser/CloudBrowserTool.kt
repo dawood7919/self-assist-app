@@ -21,10 +21,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,8 +52,8 @@ import com.dawood.orbit.tools.shell.ToolShell
 /**
  * Cloud Browser — remote Chromium running on the VPS, streamed into a WebView.
  *
- * The phone only displays the Selkies/noVNC-style session and forwards touch
- * and keyboard. Page rendering, networking and CPU all stay on the server.
+ * The phone only displays the Selkies session and forwards touch and keyboard.
+ * Page rendering, networking and CPU all stay on the server.
  */
 @Composable
 fun CloudBrowserTool(
@@ -64,7 +62,7 @@ fun CloudBrowserTool(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val settings = remember { CloudBrowserSettings.get(context) }
+    val browserSettings = remember { CloudBrowserSettings.get(context) }
 
     var showSettings by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf(ConnectionStatus.Connecting) }
@@ -81,6 +79,7 @@ fun CloudBrowserTool(
         tool = tool,
         onBack = onBack,
         modifier = modifier,
+        subtitle = "Remote Chromium on your VPS",
         actions = {
             OrbitIconButton(
                 icon = OrbitIcons.Refresh,
@@ -89,6 +88,7 @@ fun CloudBrowserTool(
                     status = ConnectionStatus.Connecting
                     statusMessage = "Reconnecting…"
                     reloadToken++
+                    webView?.reload()
                 },
             )
             OrbitIconButton(
@@ -103,7 +103,7 @@ fun CloudBrowserTool(
 
             if (showSettings) {
                 ServerSettingsPanel(
-                    settings = settings,
+                    settings = browserSettings,
                     onSave = {
                         showSettings = false
                         status = ConnectionStatus.Connecting
@@ -118,10 +118,10 @@ fun CloudBrowserTool(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .background(OrbitTheme.colors.backgroundElevated),
+                    .background(OrbitTheme.colors.surfaceElevated),
             ) {
                 RemoteBrowserView(
-                    settings = settings,
+                    browserSettings = browserSettings,
                     reloadToken = reloadToken,
                     onStatus = { s, msg ->
                         status = s
@@ -137,6 +137,7 @@ fun CloudBrowserTool(
                             status = ConnectionStatus.Connecting
                             statusMessage = "Reconnecting…"
                             reloadToken++
+                            webView?.reload()
                         },
                     )
                 }
@@ -264,7 +265,7 @@ private fun SettingField(
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = ImeAction.Next),
             modifier = Modifier
                 .fillMaxWidth()
-                .background(OrbitTheme.colors.backgroundElevated, OrbitTheme.radius.md)
+                .background(OrbitTheme.colors.surfaceElevated, OrbitTheme.radius.md)
                 .padding(OrbitTheme.spacing.sm),
         )
     }
@@ -303,14 +304,16 @@ private fun ErrorOverlay(message: String, onRetry: () -> Unit) {
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 private fun RemoteBrowserView(
-    settings: CloudBrowserSettings,
+    browserSettings: CloudBrowserSettings,
     reloadToken: Int,
     onStatus: (ConnectionStatus, String) -> Unit,
     onWebViewReady: (WebView) -> Unit,
 ) {
-    val url = remember(reloadToken, settings.host, settings.port) { settings.baseUrl() }
-    val user = settings.username
-    val pass = settings.password
+    val url = remember(reloadToken, browserSettings.host, browserSettings.port) {
+        browserSettings.baseUrl()
+    }
+    val user = browserSettings.username
+    val pass = browserSettings.password
 
     AndroidView(
         factory = { ctx ->
@@ -328,8 +331,6 @@ private fun RemoteBrowserView(
                 settings.builtInZoomControls = false
                 settings.displayZoomControls = false
                 settings.setSupportZoom(false)
-                // Keep the remote desktop interactive; do not let the WebView
-                // steal long-press for text selection of the stream canvas.
                 isLongClickable = false
                 setOnLongClickListener { true }
 
@@ -370,17 +371,11 @@ private fun RemoteBrowserView(
             }
         },
         update = { view ->
-            // Reload when settings / reconnect token change.
-            if (view.url != url) {
+            val current = view.url.orEmpty()
+            if (reloadToken > 0 && !current.startsWith(url.trimEnd('/'))) {
                 view.loadUrl(url)
             }
         },
         modifier = Modifier.fillMaxSize(),
     )
-
-    DisposableEffect(Unit) {
-        onDispose {
-            // WebView is destroyed with the AndroidView lifecycle.
-        }
-    }
 }
