@@ -9,7 +9,7 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /**
- * Talks to the VPS control API (nginx /api/* → CDP → Chromium).
+ * Talks to the VPS control API (nginx /api/… → CDP → Chromium).
  */
 class CloudBrowserApi(
     private val settings: CloudBrowserSettings,
