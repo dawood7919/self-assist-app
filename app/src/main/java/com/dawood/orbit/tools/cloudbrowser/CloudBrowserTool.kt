@@ -14,6 +14,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,12 +23,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -75,11 +78,14 @@ fun CloudBrowserTool(
     var showSettings by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf(ConnectionStatus.Connecting) }
     var statusMessage by remember { mutableStateOf("Connecting to VPS…") }
-    // Address bar is for CDP navigation only — never the stream WebView URL.
     var address by remember { mutableStateOf("https://www.google.com") }
     var webView by remember { mutableStateOf<WebView?>(null) }
     var reloadToken by remember { mutableStateOf(0) }
     var busy by remember { mutableStateOf(false) }
+    var mouseTool by remember { mutableStateOf(MouseTool.Pointer) }
+    var mouseEnabled by remember { mutableStateOf(true) }
+    var remoteW by remember { mutableFloatStateOf(1280f) }
+    var remoteH by remember { mutableFloatStateOf(720f) }
 
     fun runAction(block: () -> CloudBrowserApi.ActionResult) {
         if (busy) return
@@ -92,9 +98,7 @@ fun CloudBrowserTool(
                 val st = withContext(Dispatchers.IO) { api.status() }
                 if (st.ok) {
                     st.url?.let { address = it }
-                    if (status != ConnectionStatus.Connected) {
-                        status = ConnectionStatus.Connected
-                    }
+                    if (status != ConnectionStatus.Connected) status = ConnectionStatus.Connected
                     statusMessage = st.title?.takeIf { it.isNotBlank() } ?: "Online · VPS Chromium"
                 }
             } else {
@@ -106,17 +110,19 @@ fun CloudBrowserTool(
 
     LaunchedEffect(reloadToken, status) {
         if (status != ConnectionStatus.Connected) return@LaunchedEffect
+        val layout = withContext(Dispatchers.IO) { api.layout() }
+        if (layout.ok) {
+            remoteW = layout.width
+            remoteH = layout.height
+        }
         while (isActive) {
             val st = withContext(Dispatchers.IO) { api.status() }
             if (st.ok) {
-                // Only update address from remote page URL (http/https), never relative paths.
                 val remote = st.url
                 if (!remote.isNullOrBlank() && (remote.startsWith("http://") || remote.startsWith("https://"))) {
                     address = remote
                 }
-                if (!st.title.isNullOrBlank()) {
-                    statusMessage = st.title
-                }
+                if (!st.title.isNullOrBlank()) statusMessage = st.title
             }
             delay(2500)
         }
@@ -155,19 +161,22 @@ fun CloudBrowserTool(
             BrowserToolbar(
                 address = address,
                 onAddressChange = { address = it },
-                // Always allow typing; nav buttons need a live stream.
                 navEnabled = status == ConnectionStatus.Connected && !busy,
                 onSubmit = {
                     keyboard?.hide()
                     val typed = address.trim()
-                    if (typed.isNotEmpty()) {
-                        runAction { api.navigate(typed) }
-                    }
+                    if (typed.isNotEmpty()) runAction { api.navigate(typed) }
                 },
                 onBackNav = { runAction { api.back() } },
                 onForward = { runAction { api.forward() } },
                 onReload = { runAction { api.reload() } },
                 onHome = { runAction { api.home() } },
+            )
+            MouseToolsBar(
+                selected = mouseTool,
+                mouseEnabled = mouseEnabled,
+                onSelect = { mouseTool = it },
+                onToggleMouse = { mouseEnabled = !mouseEnabled },
             )
             if (showSettings) {
                 ServerSettingsPanel(
@@ -196,6 +205,14 @@ fun CloudBrowserTool(
                     },
                     onWebViewReady = { webView = it },
                 )
+                // Mouse pad on top of stream — cursor offset from finger
+                MousePad(
+                    api = api,
+                    tool = mouseTool,
+                    remoteWidth = remoteW,
+                    remoteHeight = remoteH,
+                    enabled = mouseEnabled && status == ConnectionStatus.Connected,
+                )
                 if (status == ConnectionStatus.Error) {
                     ErrorOverlay(
                         message = statusMessage,
@@ -215,6 +232,57 @@ fun CloudBrowserTool(
 enum class ConnectionStatus { Connecting, Connected, Error }
 
 @Composable
+private fun MouseToolsBar(
+    selected: MouseTool,
+    mouseEnabled: Boolean,
+    onSelect: (MouseTool) -> Unit,
+    onToggleMouse: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(OrbitTheme.colors.backgroundBase)
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = OrbitTheme.spacing.sm, vertical = OrbitTheme.spacing.xs),
+        horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        OrbitButton(
+            text = if (mouseEnabled) "Mouse On" else "Mouse Off",
+            onClick = onToggleMouse,
+            variant = if (mouseEnabled) OrbitButtonVariant.Primary else OrbitButtonVariant.Secondary,
+            size = OrbitButtonSize.Small,
+        )
+        ToolChip("Pointer", selected == MouseTool.Pointer && mouseEnabled) {
+            onSelect(MouseTool.Pointer)
+            if (!mouseEnabled) onToggleMouse()
+        }
+        ToolChip("Right click", selected == MouseTool.RightClick && mouseEnabled) {
+            onSelect(MouseTool.RightClick)
+            if (!mouseEnabled) onToggleMouse()
+        }
+        ToolChip("Drag", selected == MouseTool.Drag && mouseEnabled) {
+            onSelect(MouseTool.Drag)
+            if (!mouseEnabled) onToggleMouse()
+        }
+        ToolChip("Scroll", selected == MouseTool.Scroll && mouseEnabled) {
+            onSelect(MouseTool.Scroll)
+            if (!mouseEnabled) onToggleMouse()
+        }
+    }
+}
+
+@Composable
+private fun ToolChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    OrbitButton(
+        text = label,
+        onClick = onClick,
+        variant = if (selected) OrbitButtonVariant.Tertiary else OrbitButtonVariant.Ghost,
+        size = OrbitButtonSize.Small,
+    )
+}
+
+@Composable
 private fun StatusBar(status: ConnectionStatus, message: String) {
     val color = when (status) {
         ConnectionStatus.Connected -> OrbitTheme.colors.success
@@ -229,11 +297,7 @@ private fun StatusBar(status: ConnectionStatus, message: String) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
     ) {
-        Box(
-            Modifier
-                .size(8.dp)
-                .background(color, OrbitTheme.radius.pill),
-        )
+        Box(Modifier.size(8.dp).background(color, OrbitTheme.radius.pill))
         OrbitText(
             text = message,
             modifier = Modifier.weight(1f),
@@ -262,20 +326,8 @@ private fun BrowserToolbar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        OrbitIconButton(
-            icon = OrbitIcons.Back,
-            contentDescription = "Back",
-            onClick = onBackNav,
-            enabled = navEnabled,
-            size = OrbitButtonSize.Small,
-        )
-        OrbitIconButton(
-            icon = OrbitIcons.Forward,
-            contentDescription = "Forward",
-            onClick = onForward,
-            enabled = navEnabled,
-            size = OrbitButtonSize.Small,
-        )
+        OrbitIconButton(icon = OrbitIcons.Back, contentDescription = "Back", onClick = onBackNav, enabled = navEnabled, size = OrbitButtonSize.Small)
+        OrbitIconButton(icon = OrbitIcons.Forward, contentDescription = "Forward", onClick = onForward, enabled = navEnabled, size = OrbitButtonSize.Small)
         BasicTextField(
             value = address,
             onValueChange = onAddressChange,
@@ -283,10 +335,7 @@ private fun BrowserToolbar(
             enabled = true,
             textStyle = OrbitTheme.typography.body.copy(color = OrbitTheme.colors.textPrimary),
             cursorBrush = SolidColor(OrbitTheme.colors.accent),
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Uri,
-                imeAction = ImeAction.Go,
-            ),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
             keyboardActions = KeyboardActions(onGo = { onSubmit() }),
             modifier = Modifier
                 .weight(1f)
@@ -295,30 +344,14 @@ private fun BrowserToolbar(
             decorationBox = { inner ->
                 Box {
                     if (address.isEmpty()) {
-                        OrbitText(
-                            text = "Search or enter URL",
-                            style = OrbitTheme.typography.body,
-                            color = OrbitTheme.colors.textPlaceholder,
-                        )
+                        OrbitText(text = "Search or enter URL", style = OrbitTheme.typography.body, color = OrbitTheme.colors.textPlaceholder)
                     }
                     inner()
                 }
             },
         )
-        OrbitIconButton(
-            icon = OrbitIcons.Refresh,
-            contentDescription = "Reload",
-            onClick = onReload,
-            enabled = navEnabled,
-            size = OrbitButtonSize.Small,
-        )
-        OrbitIconButton(
-            icon = OrbitIcons.Home,
-            contentDescription = "Home",
-            onClick = onHome,
-            enabled = navEnabled,
-            size = OrbitButtonSize.Small,
-        )
+        OrbitIconButton(icon = OrbitIcons.Refresh, contentDescription = "Reload", onClick = onReload, enabled = navEnabled, size = OrbitButtonSize.Small)
+        OrbitIconButton(icon = OrbitIcons.Home, contentDescription = "Home", onClick = onHome, enabled = navEnabled, size = OrbitButtonSize.Small)
     }
 }
 
@@ -334,11 +367,7 @@ private fun ServerSettingsPanel(
     var pass by remember { mutableStateOf(settings.password) }
     var https by remember { mutableStateOf(settings.useHttps) }
 
-    OrbitCard(
-        Modifier
-            .fillMaxWidth()
-            .padding(OrbitTheme.spacing.md),
-    ) {
+    OrbitCard(Modifier.fillMaxWidth().padding(OrbitTheme.spacing.md)) {
         Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
             OrbitText(text = "VPS connection", style = OrbitTheme.typography.h4)
             OrbitText(
@@ -347,24 +376,10 @@ private fun ServerSettingsPanel(
                 color = OrbitTheme.colors.textMuted,
             )
             SettingField(label = "Host / IP", value = host, onValueChange = { host = it })
-            SettingField(
-                label = "Port",
-                value = port,
-                onValueChange = { port = it.filter { ch -> ch.isDigit() }.take(5) },
-                keyboardType = KeyboardType.Number,
-            )
+            SettingField(label = "Port", value = port, onValueChange = { port = it.filter { ch -> ch.isDigit() }.take(5) }, keyboardType = KeyboardType.Number)
             SettingField(label = "Username", value = user, onValueChange = { user = it })
-            SettingField(
-                label = "Password",
-                value = pass,
-                onValueChange = { pass = it },
-                isPassword = true,
-            )
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
+            SettingField(label = "Password", value = pass, onValueChange = { pass = it }, isPassword = true)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 OrbitText(text = "Use HTTPS", style = OrbitTheme.typography.body)
                 OrbitButton(
                     text = if (https) "On" else "Off",
@@ -373,17 +388,8 @@ private fun ServerSettingsPanel(
                     size = OrbitButtonSize.Small,
                 )
             }
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
-            ) {
-                OrbitButton(
-                    text = "Cancel",
-                    onClick = onCancel,
-                    variant = OrbitButtonVariant.Ghost,
-                    size = OrbitButtonSize.Small,
-                    modifier = Modifier.weight(1f),
-                )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
+                OrbitButton(text = "Cancel", onClick = onCancel, variant = OrbitButtonVariant.Ghost, size = OrbitButtonSize.Small, modifier = Modifier.weight(1f))
                 OrbitButton(
                     text = "Save & connect",
                     onClick = {
@@ -411,11 +417,7 @@ private fun SettingField(
     isPassword: Boolean = false,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        OrbitText(
-            text = label,
-            style = OrbitTheme.typography.caption,
-            color = OrbitTheme.colors.textMuted,
-        )
+        OrbitText(text = label, style = OrbitTheme.typography.caption, color = OrbitTheme.colors.textMuted)
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
@@ -435,9 +437,7 @@ private fun SettingField(
 @Composable
 private fun ErrorOverlay(message: String, onRetry: () -> Unit) {
     Box(
-        Modifier
-            .fillMaxSize()
-            .background(OrbitTheme.colors.backgroundBase.copy(alpha = 0.92f)),
+        Modifier.fillMaxSize().background(OrbitTheme.colors.backgroundBase.copy(alpha = 0.92f)),
         contentAlignment = Alignment.Center,
     ) {
         Column(
@@ -445,18 +445,9 @@ private fun ErrorOverlay(message: String, onRetry: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md),
         ) {
-            OrbitIcon(
-                icon = OrbitIcons.Warning,
-                contentDescription = null,
-                size = 40.dp,
-                tint = OrbitTheme.colors.error,
-            )
+            OrbitIcon(icon = OrbitIcons.Warning, contentDescription = null, size = 40.dp, tint = OrbitTheme.colors.error)
             OrbitText(text = "Unable to reach VPS", style = OrbitTheme.typography.h3)
-            OrbitText(
-                text = message,
-                style = OrbitTheme.typography.body,
-                color = OrbitTheme.colors.textMuted,
-            )
+            OrbitText(text = message, style = OrbitTheme.typography.body, color = OrbitTheme.colors.textMuted)
             OrbitButton(text = "Retry", onClick = onRetry)
         }
     }
@@ -506,18 +497,9 @@ private fun RemoteBrowserView(
                         handler?.proceed(user, pass)
                     }
 
-                    override fun onReceivedSslError(
-                        view: WebView?,
-                        handler: SslErrorHandler?,
-                        error: SslError?,
-                    ) {
-                        // Trust only our VPS self-signed certificate.
+                    override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
                         val url = error?.url.orEmpty()
-                        if (url.contains(expectedHost)) {
-                            handler?.proceed()
-                        } else {
-                            handler?.cancel()
-                        }
+                        if (url.contains(expectedHost)) handler?.proceed() else handler?.cancel()
                     }
 
                     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -534,10 +516,7 @@ private fun RemoteBrowserView(
                         error: WebResourceError?,
                     ) {
                         if (request?.isForMainFrame == true) {
-                            onStatus(
-                                ConnectionStatus.Error,
-                                error?.description?.toString() ?: "Connection failed",
-                            )
+                            onStatus(ConnectionStatus.Error, error?.description?.toString() ?: "Connection failed")
                         }
                     }
                 }
@@ -547,7 +526,6 @@ private fun RemoteBrowserView(
         },
         update = { view ->
             val current = view.url.orEmpty()
-            // Reload stream only when reconnect token forces a new base URL.
             if (reloadToken > 0 && !current.startsWith(streamUrl.trimEnd('/'))) {
                 view.loadUrl(streamUrl)
             }
