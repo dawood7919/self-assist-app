@@ -3,12 +3,6 @@ package com.dawood.orbit.tools.videodownloader.model
 import com.dawood.orbit.tools.videodownloader.resolve.ResolvedMedia
 import kotlin.math.abs
 
-/**
- * How to pick a stream when several candidates exist (typical for playlists).
- *
- * Applied to every selected playlist entry so the user does not have to open
- * each video just to choose 720p again.
- */
 enum class QualityPreference(val label: String, val targetHeight: Int?) {
     Best("Best", null),
     P1080("1080p", 1080),
@@ -29,6 +23,8 @@ enum class QualityPreference(val label: String, val targetHeight: Int?) {
                 } ?: candidates.lastOrNull()
 
                 Best -> candidates.firstOrNull {
+                    it.mimeType.startsWith("video", ignoreCase = true) && !it.videoOnly
+                } ?: candidates.firstOrNull {
                     it.mimeType.startsWith("video", ignoreCase = true)
                 } ?: candidates.first()
 
@@ -38,18 +34,16 @@ enum class QualityPreference(val label: String, val targetHeight: Int?) {
                         it.mimeType.startsWith("video", ignoreCase = true)
                     }
                     if (video.isEmpty()) return candidates.first()
-                    // Prefer exact match, else nearest height without going much lower first.
                     video.minByOrNull { candidate ->
                         val h = heightOf(candidate.qualityLabel) ?: 0
                         val diff = abs(h - target)
-                        // Slight penalty for going above target so 720 prefers 720 over 1080 when both exist.
-                        if (h > target) diff + 50 else diff
+                        val onlyPenalty = if (candidate.videoOnly) 25 else 0
+                        (if (h > target) diff + 50 else diff) + onlyPenalty
                     }
                 }
             }
         }
 
-        /** Parses "1080p", "1080p60", "720" into a height. */
         fun heightOf(label: String?): Int? {
             if (label.isNullOrBlank()) return null
             return label.takeWhile { it.isDigit() }.toIntOrNull()?.takeIf { it in 144..4320 }
