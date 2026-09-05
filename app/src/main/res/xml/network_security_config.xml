@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Allow cleartext only to the Cloud Browser reverse proxy (HTTP port).
-     Everything else stays on the platform default (HTTPS-only on modern API). -->
+<!-- Cloud Browser VPS: allow cleartext for legacy HTTP and trust user CAs
+     so the self-signed HTTPS proxy on :8443 can be accepted by the system. -->
 <network-security-config>
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">43.134.10.177</domain>
         <domain includeSubdomains="false">localhost</domain>
         <domain includeSubdomains="false">127.0.0.1</domain>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
     </domain-config>
 </network-security-config>

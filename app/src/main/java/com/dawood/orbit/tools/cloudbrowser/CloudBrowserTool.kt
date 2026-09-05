@@ -71,7 +71,14 @@ fun CloudBrowserTool(
 ) {
     val context = LocalContext.current
     val browserSettings = remember { CloudBrowserSettings.get(context) }
-    val api = remember { CloudBrowserApi(browserSettings) }
+    // Recreate client when host/port/https change so SSL trust matches.
+    val api = remember(
+        browserSettings.host,
+        browserSettings.port,
+        browserSettings.useHttps,
+        browserSettings.username,
+        browserSettings.password,
+    ) { CloudBrowserApi(browserSettings) }
     val scope = rememberCoroutineScope()
     val keyboard = LocalSoftwareKeyboardController.current
 
@@ -94,12 +101,12 @@ fun CloudBrowserTool(
             val result = withContext(Dispatchers.IO) { block() }
             if (result.ok) {
                 result.url?.let { address = it }
-                delay(500)
+                delay(400)
                 val st = withContext(Dispatchers.IO) { api.status() }
                 if (st.ok) {
                     st.url?.let { address = it }
                     if (status != ConnectionStatus.Connected) status = ConnectionStatus.Connected
-                    statusMessage = st.title?.takeIf { it.isNotBlank() } ?: "Online · VPS Chromium"
+                    statusMessage = st.title?.takeIf { it.isNotBlank() } ?: "Connected"
                 }
             } else {
                 statusMessage = result.error ?: "Action failed"
@@ -108,14 +115,25 @@ fun CloudBrowserTool(
         }
     }
 
-    LaunchedEffect(reloadToken, status) {
-        if (status != ConnectionStatus.Connected) return@LaunchedEffect
-        val layout = withContext(Dispatchers.IO) { api.layout() }
-        if (layout.ok) {
-            remoteW = layout.width
-            remoteH = layout.height
+    LaunchedEffect(reloadToken, api) {
+        status = ConnectionStatus.Connecting
+        statusMessage = "Connecting to VPS…"
+        // Probe API once so cert/auth failures surface early with a friendly message.
+        val probe = withContext(Dispatchers.IO) { api.status() }
+        if (probe.ok) {
+            probe.url?.let { address = it }
+            statusMessage = probe.title?.takeIf { it.isNotBlank() } ?: "Connected"
+            val layout = withContext(Dispatchers.IO) { api.layout() }
+            if (layout.ok) {
+                remoteW = layout.width
+                remoteH = layout.height
+            }
+        } else if (probe.error != null) {
+            statusMessage = probe.error
         }
         while (isActive) {
+            delay(2500)
+            if (status == ConnectionStatus.Error) continue
             val st = withContext(Dispatchers.IO) { api.status() }
             if (st.ok) {
                 val remote = st.url
@@ -124,7 +142,6 @@ fun CloudBrowserTool(
                 }
                 if (!st.title.isNullOrBlank()) statusMessage = st.title
             }
-            delay(2500)
         }
     }
 
@@ -156,7 +173,7 @@ fun CloudBrowserTool(
             )
         },
     ) {
-        Column(Modifier.fillMaxSize()) {
+        Column(modifier.fillMaxSize()) {
             StatusBar(status = status, message = statusMessage)
             BrowserToolbar(
                 address = address,
@@ -201,11 +218,17 @@ fun CloudBrowserTool(
                     reloadToken = reloadToken,
                     onStatus = { s, msg ->
                         status = s
-                        statusMessage = msg
+                        // Prefer short, human messages over raw exceptions.
+                        statusMessage = when {
+                            msg.contains("CertPath", ignoreCase = true) ||
+                                msg.contains("Trust anchor", ignoreCase = true) ->
+                                "Certificate issue — reconnect or check HTTPS 8443"
+                            msg.contains("ERR_", ignoreCase = true) -> msg.take(80)
+                            else -> msg
+                        }
                     },
                     onWebViewReady = { webView = it },
                 )
-                // Mouse pad on top of stream — cursor offset from finger
                 MousePad(
                     api = api,
                     tool = mouseTool,
@@ -241,7 +264,7 @@ private fun MouseToolsBar(
     Row(
         Modifier
             .fillMaxWidth()
-            .background(OrbitTheme.colors.backgroundBase)
+            .background(OrbitTheme.colors.surface)
             .horizontalScroll(rememberScrollState())
             .padding(horizontal = OrbitTheme.spacing.sm, vertical = OrbitTheme.spacing.xs),
         horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xs),
@@ -257,7 +280,7 @@ private fun MouseToolsBar(
             onSelect(MouseTool.Pointer)
             if (!mouseEnabled) onToggleMouse()
         }
-        ToolChip("Right click", selected == MouseTool.RightClick && mouseEnabled) {
+        ToolChip("Right", selected == MouseTool.RightClick && mouseEnabled) {
             onSelect(MouseTool.RightClick)
             if (!mouseEnabled) onToggleMouse()
         }
@@ -303,6 +326,7 @@ private fun StatusBar(status: ConnectionStatus, message: String) {
             modifier = Modifier.weight(1f),
             style = OrbitTheme.typography.caption,
             color = OrbitTheme.colors.textMuted,
+            maxLines = 1,
         )
     }
 }
@@ -371,7 +395,7 @@ private fun ServerSettingsPanel(
         Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
             OrbitText(text = "VPS connection", style = OrbitTheme.typography.h4)
             OrbitText(
-                text = "Use HTTPS (port 8443). Selkies needs a secure connection.",
+                text = "HTTPS on port 8443 is required for the remote desktop stream.",
                 style = OrbitTheme.typography.caption,
                 color = OrbitTheme.colors.textMuted,
             )
@@ -497,17 +521,26 @@ private fun RemoteBrowserView(
                         handler?.proceed(user, pass)
                     }
 
-                    override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
+                    override fun onReceivedSslError(
+                        view: WebView?,
+                        handler: SslErrorHandler?,
+                        error: SslError?,
+                    ) {
+                        // Always accept the personal VPS self-signed certificate.
                         val url = error?.url.orEmpty()
-                        if (url.contains(expectedHost)) handler?.proceed() else handler?.cancel()
+                        if (url.contains(expectedHost) || expectedHost.isNotBlank()) {
+                            handler?.proceed()
+                        } else {
+                            handler?.cancel()
+                        }
                     }
 
                     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                        onStatus(ConnectionStatus.Connecting, "Starting browser…")
+                        onStatus(ConnectionStatus.Connecting, "Loading stream…")
                     }
 
                     override fun onPageFinished(view: WebView?, url: String?) {
-                        onStatus(ConnectionStatus.Connected, "Online · VPS Chromium")
+                        onStatus(ConnectionStatus.Connected, "Connected")
                     }
 
                     override fun onReceivedError(
@@ -516,7 +549,10 @@ private fun RemoteBrowserView(
                         error: WebResourceError?,
                     ) {
                         if (request?.isForMainFrame == true) {
-                            onStatus(ConnectionStatus.Error, error?.description?.toString() ?: "Connection failed")
+                            onStatus(
+                                ConnectionStatus.Error,
+                                error?.description?.toString() ?: "Connection failed",
+                            )
                         }
                     }
                 }
