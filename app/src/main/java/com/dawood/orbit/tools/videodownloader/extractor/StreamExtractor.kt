@@ -39,7 +39,7 @@ object StreamExtractor {
 
     fun handles(url: String): Boolean = runCatching {
         ensureInitialised()
-        ServiceList.getServiceByUrl(url) != null
+        NewPipe.getServiceByUrl(url) != null
     }.getOrDefault(false)
 
     fun supportedServices(): List<String> = runCatching {
@@ -50,20 +50,19 @@ object StreamExtractor {
     suspend fun extract(url: String): Outcome = withContext(Dispatchers.IO) {
         runCatching {
             ensureInitialised()
-            val service = ServiceList.getServiceByUrl(url)
+            val service = runCatching { NewPipe.getServiceByUrl(url) }.getOrNull()
                 ?: return@runCatching Outcome.NotSupported(
                     "No extractor knows that host. Signed hosts that work: ${supportedServices().joinToString()}.",
                 )
-            val linkHandler = service.getStreamLHFactory().fromUrl(url)
             if (url.contains("list=") || url.contains("/playlist") || url.contains("/channel/") ||
                 url.contains("/c/") || url.contains("/user/") || url.contains("/@")
             ) {
                 runCatching {
-                    val pl = PlaylistInfo.getInfo(service, service.getPlaylistLHFactory().fromUrl(url))
+                    val pl = PlaylistInfo.getInfo(service, url)
                     return@runCatching playlistOutcome(service, pl)
                 }.getOrNull()?.let { return@runCatching it }
             }
-            val info = StreamInfo.getInfo(service, linkHandler)
+            val info = StreamInfo.getInfo(service, url)
             val candidates = StreamQualities.fromStreamInfo(service, info)
             if (candidates.isEmpty()) {
                 Outcome.NotSupported("${service.serviceInfo.name} returned no usable streams.")
@@ -78,9 +77,9 @@ object StreamExtractor {
     suspend fun extractStreamUrl(url: String): Outcome = withContext(Dispatchers.IO) {
         runCatching {
             ensureInitialised()
-            val service = ServiceList.getServiceByUrl(url)
+            val service = runCatching { NewPipe.getServiceByUrl(url) }.getOrNull()
                 ?: return@runCatching Outcome.NotSupported("Unsupported host.")
-            val info = StreamInfo.getInfo(service, service.getStreamLHFactory().fromUrl(url))
+            val info = StreamInfo.getInfo(service, url)
             val candidates = StreamQualities.fromStreamInfo(service, info)
             if (candidates.isEmpty()) {
                 Outcome.NotSupported("No streams.")
@@ -101,9 +100,9 @@ object StreamExtractor {
                 service.searchQHFactory.fromQuery(query, listOf("videos"), ""),
             )
             val entries = search.relatedItems.mapNotNull { item ->
-                val url = item.url ?: return@mapNotNull null
+                val itemUrl = item.url ?: return@mapNotNull null
                 PlaylistEntry(
-                    url = url,
+                    url = itemUrl,
                     title = item.name.orEmpty().ifBlank { "Video" },
                     thumbnailUrl = item.thumbnails?.maxByOrNull { it.height }?.url,
                     uploader = null,
@@ -120,7 +119,7 @@ object StreamExtractor {
                         serviceName = "YouTube",
                         thumbnailUrl = entries.firstOrNull()?.thumbnailUrl,
                         uploader = null,
-                        entryCount = entries.size,
+                        entryCount = entries.size.toLong(),
                         entries = entries,
                         truncated = false,
                     ),
@@ -136,9 +135,9 @@ object StreamExtractor {
         pl: PlaylistInfo,
     ): Outcome {
         val entries = pl.relatedItems.mapNotNull { item ->
-            val url = item.url ?: return@mapNotNull null
+            val itemUrl = item.url ?: return@mapNotNull null
             PlaylistEntry(
-                url = url,
+                url = itemUrl,
                 title = item.name.orEmpty().ifBlank { "Video" },
                 thumbnailUrl = item.thumbnails?.maxByOrNull { it.height }?.url,
                 uploader = null,
@@ -148,6 +147,10 @@ object StreamExtractor {
         if (entries.isEmpty()) {
             return Outcome.Failed("Playlist has no videos.")
         }
+        val count = when {
+            pl.streamCount > 0 -> pl.streamCount
+            else -> entries.size.toLong()
+        }
         return Outcome.Playlist(
             ResolvedPlaylist(
                 title = pl.name.orEmpty().ifBlank { "Playlist" },
@@ -156,9 +159,9 @@ object StreamExtractor {
                 thumbnailUrl = pl.thumbnails?.maxByOrNull { it.height }?.url
                     ?: entries.firstOrNull()?.thumbnailUrl,
                 uploader = pl.uploaderName,
-                entryCount = pl.streamCount.takeIf { it > 0 }?.toInt() ?: entries.size,
+                entryCount = count,
                 entries = entries,
-                truncated = pl.streamCount > entries.size,
+                truncated = count > entries.size,
             ),
         )
     }
