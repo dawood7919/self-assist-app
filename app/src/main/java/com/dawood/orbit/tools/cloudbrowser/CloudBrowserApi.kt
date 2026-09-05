@@ -6,18 +6,51 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.HostnameVerifier
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
-/** Talks to the VPS control API (nginx /api/… → CDP → Chromium). */
+/**
+ * Talks to the VPS control API (nginx /api/… → CDP → Chromium).
+ *
+ * The VPS uses a self-signed certificate on :8443. OkHttp is configured to
+ * accept that host only so API calls (status, mouse, navigate) work.
+ */
 class CloudBrowserApi(
     private val settings: CloudBrowserSettings,
 ) {
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .writeTimeout(8, TimeUnit.SECONDS)
-        .retryOnConnectionFailure(true)
-        .build()
+    private val client: OkHttpClient = buildClient()
+
+    private fun buildClient(): OkHttpClient {
+        val builder = OkHttpClient.Builder()
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .writeTimeout(8, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+
+        if (settings.useHttps) {
+            // Trust the personal VPS self-signed cert (not used for public internet).
+            val trustAll = object : X509TrustManager {
+                override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
+                override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
+                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+            }
+            val ssl = SSLContext.getInstance("TLS").apply {
+                init(null, arrayOf<TrustManager>(trustAll), SecureRandom())
+            }
+            builder.sslSocketFactory(ssl.socketFactory, trustAll)
+            builder.hostnameVerifier(HostnameVerifier { hostname, _ ->
+                hostname.equals(settings.host, ignoreCase = true) ||
+                    hostname == "127.0.0.1" ||
+                    hostname == "localhost"
+            })
+        }
+        return builder.build()
+    }
 
     private fun authHeader(): String =
         Credentials.basic(settings.username, settings.password)
@@ -48,7 +81,7 @@ class CloudBrowserApi(
                 )
             }
         } catch (e: Exception) {
-            StatusResult(ok = false, error = e.message ?: "Network error")
+            StatusResult(ok = false, error = friendlyError(e))
         }
     }
 
@@ -74,7 +107,7 @@ class CloudBrowserApi(
                 )
             }
         } catch (e: Exception) {
-            LayoutResult(ok = false, width = 1280f, height = 720f, error = e.message)
+            LayoutResult(ok = false, width = 1280f, height = 720f, error = friendlyError(e))
         }
     }
 
@@ -122,7 +155,23 @@ class CloudBrowserApi(
                 )
             }
         } catch (e: Exception) {
-            ActionResult(ok = false, error = e.message ?: "Network error")
+            ActionResult(ok = false, error = friendlyError(e))
+        }
+    }
+
+    private fun friendlyError(e: Exception): String {
+        val msg = e.message.orEmpty()
+        return when {
+            msg.contains("CertPath", ignoreCase = true) ||
+                msg.contains("Trust anchor", ignoreCase = true) ||
+                msg.contains("SSLHandshake", ignoreCase = true) ->
+                "Certificate error — use HTTPS port 8443 and update the app"
+            msg.contains("Failed to connect", ignoreCase = true) ||
+                msg.contains("Connection refused", ignoreCase = true) ->
+                "Cannot reach VPS — check host/port"
+            msg.contains("timeout", ignoreCase = true) ->
+                "VPS timed out"
+            else -> msg.ifBlank { "Network error" }.take(120)
         }
     }
 
