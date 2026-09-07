@@ -1,5 +1,6 @@
 package com.dawood.orbit.tools.videodownloader.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,18 @@ import com.dawood.orbit.tools.videodownloader.resolve.ResolvedMedia
 import com.dawood.orbit.tools.videodownloader.service.DownloadService
 import java.util.Locale
 
+internal enum class MediaKind { Video, Audio, Image, File }
+
+internal fun mediaKindFromMime(mime: String?): MediaKind {
+    val m = mime?.lowercase(Locale.US).orEmpty()
+    return when {
+        m.startsWith("video/") -> MediaKind.Video
+        m.startsWith("audio/") -> MediaKind.Audio
+        m.startsWith("image/") -> MediaKind.Image
+        else -> MediaKind.File
+    }
+}
+
 @Composable
 internal fun ResolvedCandidates(
     candidates: List<ResolvedMedia>,
@@ -36,20 +49,37 @@ internal fun ResolvedCandidates(
     onPreview: (ResolvedMedia) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val videos = candidates.count { mediaKindFromMime(it.mimeType) == MediaKind.Video }
+    val audios = candidates.count { mediaKindFromMime(it.mimeType) == MediaKind.Audio }
+    val images = candidates.count { mediaKindFromMime(it.mimeType) == MediaKind.Image }
+
     Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
         ) {
-            OrbitText(
-                text = if (candidates.size > 1) "${candidates.size} streams" else "Ready to download",
-                style = OrbitTheme.typography.h4,
-                modifier = Modifier.weight(1f),
-            )
+            Column(Modifier = Modifier.weight(1f)) {
+                OrbitText(
+                    text = if (candidates.size > 1) "${candidates.size} available" else "Ready",
+                    style = OrbitTheme.typography.h3,
+                )
+                val summary = buildList {
+                    if (videos > 0) add("$videos video")
+                    if (audios > 0) add("$audios audio")
+                    if (images > 0) add("$images image")
+                }.joinToString(" · ")
+                if (summary.isNotBlank()) {
+                    OrbitText(
+                        text = summary,
+                        style = OrbitTheme.typography.caption,
+                        color = OrbitTheme.colors.textMuted,
+                    )
+                }
+            }
             if (candidates.size > 1) {
                 OrbitButton(
-                    text = "All",
+                    text = "Download all",
                     onClick = onDownloadAll,
                     variant = OrbitButtonVariant.Secondary,
                     size = OrbitButtonSize.Small,
@@ -66,13 +96,11 @@ internal fun ResolvedCandidates(
         candidates.forEach { media ->
             MediaResultCard(
                 title = media.title,
-                subtitle = buildString {
-                    media.qualityLabel?.let { append(it); append(" · ") }
-                    if (media.sizeBytes > 0) append(formatBytes(media.sizeBytes))
-                    else append(media.mimeType.substringAfter('/').uppercase(Locale.US))
-                    media.serviceName?.let { append(" · "); append(it) }
-                },
+                subtitle = buildMediaSubtitle(media),
                 thumbnailUrl = media.thumbnailUrl,
+                kind = mediaKindFromMime(media.mimeType),
+                qualityLabel = media.qualityLabel,
+                videoOnly = media.videoOnly,
                 resumable = media.resumable,
                 onPlay = { onPreview(media) },
                 onDownload = { onDownload(media) },
@@ -81,7 +109,15 @@ internal fun ResolvedCandidates(
     }
 }
 
-/** Shared large result card — thumbnail first, actions second. */
+private fun buildMediaSubtitle(media: ResolvedMedia): String = buildString {
+    media.qualityLabel?.let { append(it); append(" · ") }
+    if (media.sizeBytes > 0) append(formatBytes(media.sizeBytes))
+    else append(media.mimeType.substringAfter('/').uppercase(Locale.US))
+    media.serviceName?.let { append(" · "); append(it) }
+    if (media.videoOnly) append(" · video only")
+}
+
+/** Large result card — poster, type, quality, Watch + Download. */
 @Composable
 internal fun MediaResultCard(
     title: String,
@@ -89,6 +125,9 @@ internal fun MediaResultCard(
     thumbnailUrl: String?,
     onPlay: () -> Unit,
     onDownload: () -> Unit,
+    kind: MediaKind = MediaKind.Video,
+    qualityLabel: String? = null,
+    videoOnly: Boolean = false,
     resumable: Boolean = true,
     durationSeconds: Long? = null,
     selected: Boolean? = null,
@@ -96,11 +135,55 @@ internal fun MediaResultCard(
 ) {
     OrbitCard(color = OrbitTheme.colors.surfaceElevated) {
         Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
-            VideoThumbnailWide(
-                thumbnailUrl = thumbnailUrl,
-                durationSeconds = durationSeconds,
-                contentDescription = title,
-            )
+            Box {
+                when (kind) {
+                    MediaKind.Audio -> {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .background(OrbitTheme.colors.surfaceSunken, OrbitTheme.radius.shapeMd)
+                                .padding(OrbitTheme.spacing.xxl),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            OrbitIconTile(
+                                icon = OrbitIcons.Audio,
+                                size = OrbitTheme.sizes.thumbnail,
+                                iconSize = OrbitTheme.sizes.iconXl,
+                            )
+                        }
+                    }
+                    else -> VideoThumbnailWide(
+                        thumbnailUrl = thumbnailUrl,
+                        durationSeconds = durationSeconds,
+                        contentDescription = title,
+                    )
+                }
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xs),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OrbitBadge(
+                    text = when (kind) {
+                        MediaKind.Video -> "Video"
+                        MediaKind.Audio -> "Audio"
+                        MediaKind.Image -> "Image"
+                        MediaKind.File -> "File"
+                    },
+                    tone = when (kind) {
+                        MediaKind.Video -> OrbitTone.Accent
+                        MediaKind.Audio -> OrbitTone.Info
+                        MediaKind.Image -> OrbitTone.Success
+                        MediaKind.File -> OrbitTone.Neutral
+                    },
+                    showDot = true,
+                )
+                qualityLabel?.let {
+                    OrbitBadge(text = it, tone = OrbitTone.Neutral)
+                }
+                if (videoOnly) OrbitBadge(text = "No audio", tone = OrbitTone.Warning)
+                if (resumable) OrbitBadge(text = "Resumable", tone = OrbitTone.Success)
+            }
             OrbitText(
                 text = title,
                 style = OrbitTheme.typography.h4,
@@ -112,7 +195,7 @@ internal fun MediaResultCard(
                     text = subtitle,
                     style = OrbitTheme.typography.caption,
                     color = OrbitTheme.colors.textMuted,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -122,22 +205,25 @@ internal fun MediaResultCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (selected != null && onToggleSelect != null) {
-                    OrbitBadge(
-                        text = if (selected) "Selected" else "Tap to select",
-                        tone = if (selected) OrbitTone.Accent else OrbitTone.Neutral,
-                        showDot = selected,
+                    OrbitButton(
+                        text = if (selected) "Selected" else "Select",
+                        onClick = onToggleSelect,
+                        variant = if (selected) OrbitButtonVariant.Primary else OrbitButtonVariant.Secondary,
+                        size = OrbitButtonSize.Small,
                     )
-                } else if (resumable) {
-                    OrbitBadge("Resumable", tone = OrbitTone.Success, showDot = true)
+                    Box(Modifier.weight(1f))
+                } else {
+                    Box(Modifier.weight(1f))
                 }
-                Box(Modifier.weight(1f))
-                OrbitButton(
-                    text = "Play",
-                    onClick = onPlay,
-                    variant = OrbitButtonVariant.Ghost,
-                    size = OrbitButtonSize.Small,
-                    leadingIcon = OrbitIcons.Play,
-                )
+                if (kind != MediaKind.Image) {
+                    OrbitButton(
+                        text = "Watch",
+                        onClick = onPlay,
+                        variant = OrbitButtonVariant.Ghost,
+                        size = OrbitButtonSize.Small,
+                        leadingIcon = OrbitIcons.Play,
+                    )
+                }
                 OrbitButton(
                     text = "Download",
                     onClick = onDownload,
@@ -159,6 +245,7 @@ internal fun DownloadRow(
     onCancel: () -> Unit,
     onRemove: () -> Unit,
 ) {
+    val kind = mediaKindFromMime(item.mimeType)
     val tone = when (item.status) {
         DownloadStatus.Completed -> OrbitTone.Success
         DownloadStatus.Failed -> OrbitTone.Error
@@ -172,14 +259,19 @@ internal fun DownloadRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md),
         ) {
-            if (item.mimeType.startsWith("audio")) {
-                OrbitIconTile(
+            when (kind) {
+                MediaKind.Audio -> OrbitIconTile(
                     icon = OrbitIcons.Audio,
                     size = OrbitTheme.sizes.thumbnail,
                     iconSize = OrbitTheme.sizes.iconLg,
                 )
-            } else {
-                VideoThumbnail(
+                MediaKind.Image -> VideoThumbnail(
+                    thumbnailUrl = item.thumbnailUrl,
+                    localPath = item.partPath.takeIf { item.status == DownloadStatus.Completed },
+                    size = OrbitTheme.sizes.thumbnail,
+                    contentDescription = null,
+                )
+                else -> VideoThumbnail(
                     thumbnailUrl = item.thumbnailUrl,
                     localPath = item.partPath.takeIf { item.status == DownloadStatus.Completed },
                     size = OrbitTheme.sizes.thumbnail,
@@ -202,10 +294,22 @@ internal fun DownloadRow(
                     color = OrbitTheme.colors.textMuted,
                     maxLines = 1,
                 )
+                Row(horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xs)) {
+                    OrbitBadge(
+                        text = when (kind) {
+                            MediaKind.Video -> "Video"
+                            MediaKind.Audio -> "Audio"
+                            MediaKind.Image -> "Image"
+                            MediaKind.File -> "File"
+                        },
+                        tone = OrbitTone.Neutral,
+                    )
+                    item.qualityLabel?.let { OrbitBadge(text = it, tone = OrbitTone.Info) }
+                }
             }
             OrbitIconButton(
-                icon = OrbitIcons.Video,
-                contentDescription = "Play",
+                icon = OrbitIcons.Play,
+                contentDescription = "Watch",
                 onClick = onPlay,
                 size = OrbitButtonSize.Small,
             )
@@ -279,21 +383,54 @@ internal fun DownloadRow(
 
 @Composable
 internal fun SavedRow(item: DownloadItem) {
-    Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xxs)) {
-        OrbitText(
-            text = item.title,
-            style = OrbitTheme.typography.bodySmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        OrbitText(
-            text = item.savedLocation ?: formatBytes(item.downloadedBytes),
-            style = OrbitTheme.typography.caption,
-            color = OrbitTheme.colors.textMuted,
-            maxLines = 1,
+    val kind = mediaKindFromMime(item.mimeType)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        when (kind) {
+            MediaKind.Audio -> OrbitIconTile(
+                icon = OrbitIcons.Audio,
+                size = 40.dp,
+                iconSize = OrbitTheme.sizes.iconMd,
+            )
+            else -> VideoThumbnail(
+                thumbnailUrl = item.thumbnailUrl,
+                localPath = item.partPath,
+                size = 40.dp,
+                contentDescription = null,
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            OrbitText(
+                text = item.title,
+                style = OrbitTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            OrbitText(
+                text = item.savedLocation ?: formatBytes(item.downloadedBytes),
+                style = OrbitTheme.typography.caption,
+                color = OrbitTheme.colors.textMuted,
+                maxLines = 1,
+            )
+        }
+        OrbitBadge(
+            text = when (kind) {
+                MediaKind.Video -> "Video"
+                MediaKind.Audio -> "Audio"
+                MediaKind.Image -> "Image"
+                MediaKind.File -> "File"
+            },
+            tone = OrbitTone.Neutral,
         )
     }
 }
+
+// Need dp import for SavedRow
+private val androidx.compose.ui.unit.dp
+    get() = androidx.compose.ui.unit.Dp.Unspecified // placeholder removed below
 
 internal fun statusLabel(item: DownloadItem): String = when (item.status) {
     DownloadStatus.Queued -> "Queued"
