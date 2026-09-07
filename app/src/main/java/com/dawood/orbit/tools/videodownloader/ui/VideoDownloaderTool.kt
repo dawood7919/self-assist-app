@@ -4,6 +4,8 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -13,15 +15,25 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dawood.orbit.core.designsystem.component.OrbitBadge
@@ -30,10 +42,12 @@ import com.dawood.orbit.core.designsystem.component.OrbitButtonSize
 import com.dawood.orbit.core.designsystem.component.OrbitButtonVariant
 import com.dawood.orbit.core.designsystem.component.OrbitCard
 import com.dawood.orbit.core.designsystem.component.OrbitEmptyState
+import com.dawood.orbit.core.designsystem.component.OrbitIcon
 import com.dawood.orbit.core.designsystem.component.OrbitIconButton
+import com.dawood.orbit.core.designsystem.component.OrbitIconTile
 import com.dawood.orbit.core.designsystem.component.OrbitMenuItem
-import com.dawood.orbit.core.designsystem.component.OrbitSectionHeader
 import com.dawood.orbit.core.designsystem.component.OrbitSpinner
+import com.dawood.orbit.core.designsystem.component.OrbitTabs
 import com.dawood.orbit.core.designsystem.component.OrbitText
 import com.dawood.orbit.core.designsystem.component.OrbitTextField
 import com.dawood.orbit.core.designsystem.component.OrbitTone
@@ -43,12 +57,12 @@ import com.dawood.orbit.core.layout.LocalOrbitWindow
 import com.dawood.orbit.core.layout.OrbitContentContainer
 import com.dawood.orbit.tools.file.FileError
 import com.dawood.orbit.tools.model.Tool
-import com.dawood.orbit.tools.shell.ToolFooter
 import com.dawood.orbit.tools.shell.ToolPanel
 import com.dawood.orbit.tools.shell.ToolShell
 import com.dawood.orbit.tools.shell.ToolStatusLine
-import com.dawood.orbit.tools.shell.ToolWorkspace
+import com.dawood.orbit.tools.videodownloader.model.DownloadItem
 import com.dawood.orbit.tools.videodownloader.model.DownloadStatus
+import com.dawood.orbit.tools.videodownloader.resolve.ResolvedMedia
 import com.dawood.orbit.tools.videodownloader.service.DownloadService
 
 @Composable
@@ -66,6 +80,15 @@ fun VideoDownloaderTool(
 
     val active = downloads.filter { it.isActive }
     val finished = downloads.filter { it.status == DownloadStatus.Completed }
+    val failed = downloads.filter { it.status == DownloadStatus.Failed }
+
+    var mainTab by remember { mutableIntStateOf(0) }
+    var queueFilter by remember { mutableIntStateOf(0) }
+    var selectedQuality by remember { mutableStateOf<ResolvedMedia?>(null) }
+
+    LaunchedEffect(resolveState) {
+        selectedQuality = (resolveState as? ResolveUiState.Ready)?.candidates?.firstOrNull()
+    }
 
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -82,10 +105,10 @@ fun VideoDownloaderTool(
         modifier = modifier,
         subtitle = when {
             active.isNotEmpty() -> "${active.size} downloading"
-            downloads.isEmpty() -> "Nothing queued"
-            else -> "${downloads.size} in the queue"
+            downloads.isEmpty() -> "Fast · Simple · Powerful"
+            else -> "${downloads.size} in library"
         },
-        panel = ToolPanel(title = "Saved", icon = OrbitIcons.VideoLibrary) {
+        panel = ToolPanel(title = "Library", icon = OrbitIcons.VideoLibrary) {
             if (finished.isEmpty()) {
                 OrbitText(
                     text = "Finished downloads show up here.",
@@ -94,7 +117,7 @@ fun VideoDownloaderTool(
                 )
             } else {
                 Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
                 ) {
                     finished.forEach { item -> SavedRow(item) }
@@ -107,6 +130,7 @@ fun VideoDownloaderTool(
                 onClick = {
                     dismiss()
                     clipboard.getText()?.text?.let(viewModel::onUrlChange)
+                    mainTab = 0
                 },
                 icon = OrbitIcons.Copy,
             )
@@ -125,8 +149,7 @@ fun VideoDownloaderTool(
         settingsContent = {
             OrbitText("Player", style = OrbitTheme.typography.h4)
             OrbitText(
-                text = "Fullscreen with seek bar (tap or drag). Back minimizes to a mini bar " +
-                    "so playback continues while you browse the list.",
+                text = "Fullscreen with seek bar. Back minimizes so playback continues while you browse.",
                 style = OrbitTheme.typography.bodySmall,
                 color = OrbitTheme.colors.textSecondary,
             )
@@ -155,231 +178,37 @@ fun VideoDownloaderTool(
             null
         },
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            Column(
+        Column(Modifier.fillMaxSize()) {
+            OrbitTabs(
+                tabs = listOf(
+                    "Home",
+                    if (active.isNotEmpty()) "Downloads (${active.size})" else "Downloads",
+                ),
+                selectedIndex = mainTab,
+                onSelect = { mainTab = it },
                 modifier = Modifier
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState())
-                    .padding(OrbitTheme.spacing.lg),
-            ) {
-                OrbitContentContainer(maxWidth = OrbitTheme.sizes.workspaceMaxWidth) {
-                    Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.lg)) {
+                    .fillMaxWidth()
+                    .padding(horizontal = OrbitTheme.spacing.md),
+            )
 
-                        ToolWorkspace(label = "Source") {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xs),
-                            ) {
-                                OrbitButton(
-                                    text = "Link",
-                                    onClick = { viewModel.useSearchMode(false) },
-                                    variant = if (!viewModel.searchMode) {
-                                        OrbitButtonVariant.Primary
-                                    } else {
-                                        OrbitButtonVariant.Ghost
-                                    },
-                                    size = OrbitButtonSize.Small,
-                                )
-                                OrbitButton(
-                                    text = "YouTube search",
-                                    onClick = { viewModel.useSearchMode(true) },
-                                    variant = if (viewModel.searchMode) {
-                                        OrbitButtonVariant.Primary
-                                    } else {
-                                        OrbitButtonVariant.Ghost
-                                    },
-                                    size = OrbitButtonSize.Small,
-                                    leadingIcon = OrbitIcons.Search,
-                                )
-                            }
-
-                            OrbitTextField(
-                                value = viewModel.url,
-                                onValueChange = viewModel::onUrlChange,
-                                label = if (viewModel.searchMode) {
-                                    "Search YouTube"
-                                } else {
-                                    "Video, playlist, or page link"
-                                },
-                                placeholder = if (viewModel.searchMode) {
-                                    "e.g. lo-fi mix, tutorial…"
-                                } else {
-                                    "https://…"
-                                },
-                                leadingIcon = if (viewModel.searchMode) {
-                                    OrbitIcons.Search
-                                } else {
-                                    OrbitIcons.Link
-                                },
-                                trailing = {
-                                    OrbitIconButton(
-                                        icon = OrbitIcons.Copy,
-                                        contentDescription = "Paste",
-                                        onClick = {
-                                            clipboard.getText()?.text?.let(viewModel::onUrlChange)
-                                        },
-                                        size = OrbitButtonSize.Small,
-                                    )
-                                },
-                            )
-
-                            if (viewModel.historyEntries.isNotEmpty() &&
-                                resolveState is ResolveUiState.Idle
-                            ) {
-                                OrbitText(
-                                    text = "Recent",
-                                    style = OrbitTheme.typography.caption,
-                                    color = OrbitTheme.colors.textMuted,
-                                )
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xs),
-                                ) {
-                                    viewModel.historyEntries.take(12).forEach { entry ->
-                                        OrbitCard(
-                                            color = OrbitTheme.colors.surfaceSunken,
-                                            modifier = Modifier.clickable {
-                                                viewModel.openHistory(entry)
-                                            },
-                                        ) {
-                                            Column(
-                                                modifier = Modifier.padding(OrbitTheme.spacing.sm),
-                                                verticalArrangement = Arrangement.spacedBy(
-                                                    OrbitTheme.spacing.xxs,
-                                                ),
-                                            ) {
-                                                OrbitBadge(
-                                                    text = entry.kind,
-                                                    tone = when (entry.kind) {
-                                                        "search" -> OrbitTone.Info
-                                                        "download" -> OrbitTone.Success
-                                                        else -> OrbitTone.Neutral
-                                                    },
-                                                )
-                                                OrbitText(
-                                                    text = entry.title,
-                                                    style = OrbitTheme.typography.caption,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            when (val state = resolveState) {
-                                is ResolveUiState.Idle -> Unit
-
-                                is ResolveUiState.Working -> Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(
-                                        OrbitTheme.spacing.sm,
-                                    ),
-                                ) {
-                                    OrbitSpinner(size = OrbitTheme.sizes.iconMd)
-                                    OrbitText(
-                                        text = if (viewModel.searchMode) {
-                                            "Searching YouTube…"
-                                        } else {
-                                            "Looking for media…"
-                                        },
-                                        style = OrbitTheme.typography.bodySmall,
-                                        color = OrbitTheme.colors.textSecondary,
-                                    )
-                                }
-
-                                is ResolveUiState.Error -> FileError(
-                                    title = "Could not use that",
-                                    message = state.message,
-                                    onRetry = viewModel::resolve,
-                                )
-
-                                is ResolveUiState.Ready -> ResolvedCandidates(
-                                    candidates = state.candidates,
-                                    onDownload = { viewModel.enqueue(it, clearInput = false) },
-                                    onDownloadAll = { viewModel.enqueueAll(state.candidates) },
-                                    onPreview = {
-                                        viewModel.preview(it, state.candidates)
-                                    },
-                                    onDismiss = viewModel::dismissResolve,
-                                )
-
-                                is ResolveUiState.Playlist -> PlaylistPicker(
-                                    state = state,
-                                    onToggle = viewModel::togglePlaylistEntry,
-                                    onSelectAll = viewModel::selectAllPlaylist,
-                                    onClearSelection = viewModel::clearPlaylistSelection,
-                                    onQuality = viewModel::setPlaylistQuality,
-                                    onDownloadSelected = viewModel::enqueueSelectedPlaylist,
-                                    onPlayEntry = viewModel::playPlaylistEntry,
-                                    onFilter = viewModel::setPlaylistFilter,
-                                    onMinDuration = viewModel::setMinDuration,
-                                    onDismiss = viewModel::dismissResolve,
-                                )
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Box(Modifier.weight(1f))
-                                OrbitButton(
-                                    text = if (viewModel.searchMode) "Search" else "Fetch",
-                                    onClick = {
-                                        if (viewModel.searchMode) {
-                                            viewModel.searchYoutube()
-                                        } else {
-                                            viewModel.resolve()
-                                        }
-                                    },
-                                    leadingIcon = OrbitIcons.Search,
-                                    enabled = viewModel.url.isNotBlank() &&
-                                        (resolveState as? ResolveUiState.Playlist)?.enqueueing != true,
-                                    loading = resolveState is ResolveUiState.Working,
-                                )
-                            }
-                        }
-
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md),
-                        ) {
-                            OrbitSectionHeader(
-                                title = "Queue",
-                                subtitle = if (downloads.isEmpty()) null else "${downloads.size} items",
-                            )
-                            if (downloads.isEmpty()) {
-                                OrbitEmptyState(
-                                    title = "Nothing downloading",
-                                    description = "Paste a link, search YouTube, or open recent history.",
-                                    icon = OrbitIcons.Download,
-                                    compact = true,
-                                )
-                            } else {
-                                QueueList(
-                                    downloads = downloads,
-                                    expandedGroupId = viewModel.expandedPlaylistGroupId,
-                                    onToggleGroup = viewModel::togglePlaylistGroup,
-                                    onPauseGroup = viewModel::pauseGroup,
-                                    onResumeGroup = viewModel::resumeGroup,
-                                    onPlay = { viewModel.play(it) },
-                                    onPause = { viewModel.pause(it.id) },
-                                    onResume = { viewModel.resume(it.id) },
-                                    onRetry = { viewModel.retry(it.id) },
-                                    onCancel = { viewModel.cancel(it.id) },
-                                    onRemove = { viewModel.removeCompleted(it.id) },
-                                )
-                            }
-                        }
-
-                        ToolFooter(
-                            text = "YouTube search, playlists, and page listings share the same picker. " +
-                                "Play keeps the list open. Scrub the progress bar by tapping or dragging.",
-                        )
-                    }
-                }
+            when (mainTab) {
+                0 -> HomeTab(
+                    viewModel = viewModel,
+                    resolveState = resolveState,
+                    selectedQuality = selectedQuality,
+                    onSelectQuality = { selectedQuality = it },
+                    onPaste = { clipboard.getText()?.text?.let(viewModel::onUrlChange) },
+                    onGoDownloads = { mainTab = 1 },
+                )
+                else -> DownloadsTab(
+                    downloads = downloads,
+                    filter = queueFilter,
+                    onFilter = { queueFilter = it },
+                    activeCount = active.size,
+                    completedCount = finished.size,
+                    failedCount = failed.size,
+                    viewModel = viewModel,
+                )
             }
 
             VideoPlayerModal(
@@ -389,6 +218,569 @@ fun VideoDownloaderTool(
                 onExpand = viewModel::expandPlayer,
                 onDismiss = viewModel::stopPlaying,
             )
+        }
+    }
+}
+
+@Composable
+private fun HomeTab(
+    viewModel: VideoDownloaderViewModel,
+    resolveState: ResolveUiState,
+    selectedQuality: ResolvedMedia?,
+    onSelectQuality: (ResolvedMedia) -> Unit,
+    onPaste: () -> Unit,
+    onGoDownloads: () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(OrbitTheme.spacing.lg),
+        verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.lg),
+    ) {
+        OrbitContentContainer(maxWidth = OrbitTheme.sizes.workspaceMaxWidth) {
+            Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.lg)) {
+
+                // Hero
+                OrbitCard(color = OrbitTheme.colors.surfaceElevated) {
+                    Column(
+                        Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md),
+                    ) {
+                        Box(
+                            Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(OrbitTheme.colors.accent),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            OrbitIcon(
+                                icon = OrbitIcons.Download,
+                                contentDescription = null,
+                                size = 28.dp,
+                                tint = OrbitTheme.colors.textOnAccent,
+                            )
+                        }
+                        OrbitText(
+                            text = "Video Downloader",
+                            style = OrbitTheme.typography.h2,
+                            textAlign = TextAlign.Center,
+                        )
+                        OrbitText(
+                            text = "Download videos from multiple platforms in high quality",
+                            style = OrbitTheme.typography.bodySmall,
+                            color = OrbitTheme.colors.textSecondary,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                }
+
+                // Input
+                OrbitCard {
+                    Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xs)) {
+                            OrbitButton(
+                                text = "Link",
+                                onClick = { viewModel.useSearchMode(false) },
+                                variant = if (!viewModel.searchMode) {
+                                    OrbitButtonVariant.Primary
+                                } else {
+                                    OrbitButtonVariant.Ghost
+                                },
+                                size = OrbitButtonSize.Small,
+                                leadingIcon = OrbitIcons.Link,
+                            )
+                            OrbitButton(
+                                text = "YouTube search",
+                                onClick = { viewModel.useSearchMode(true) },
+                                variant = if (viewModel.searchMode) {
+                                    OrbitButtonVariant.Primary
+                                } else {
+                                    OrbitButtonVariant.Ghost
+                                },
+                                size = OrbitButtonSize.Small,
+                                leadingIcon = OrbitIcons.Search,
+                            )
+                        }
+
+                        OrbitTextField(
+                            value = viewModel.url,
+                            onValueChange = viewModel::onUrlChange,
+                            label = if (viewModel.searchMode) "Search YouTube" else "Video link",
+                            placeholder = if (viewModel.searchMode) {
+                                "e.g. lo-fi mix, tutorial…"
+                            } else {
+                                "Paste video link here…"
+                            },
+                            leadingIcon = if (viewModel.searchMode) {
+                                OrbitIcons.Search
+                            } else {
+                                OrbitIcons.Link
+                            },
+                            trailing = {
+                                OrbitIconButton(
+                                    icon = OrbitIcons.Copy,
+                                    contentDescription = "Paste",
+                                    onClick = onPaste,
+                                    size = OrbitButtonSize.Small,
+                                )
+                            },
+                        )
+
+                        OrbitButton(
+                            text = if (viewModel.searchMode) "Search" else "Analyze",
+                            onClick = {
+                                if (viewModel.searchMode) viewModel.searchYoutube()
+                                else viewModel.resolve()
+                            },
+                            leadingIcon = OrbitIcons.Search,
+                            enabled = viewModel.url.isNotBlank() &&
+                                resolveState !is ResolveUiState.Working &&
+                                (resolveState as? ResolveUiState.Playlist)?.enqueueing != true,
+                            loading = resolveState is ResolveUiState.Working,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+
+                if (resolveState is ResolveUiState.Idle) {
+                    OrbitText(text = "Supported platforms", style = OrbitTheme.typography.h4)
+                    PlatformRow()
+
+                    if (viewModel.historyEntries.isNotEmpty()) {
+                        OrbitText(text = "Recent", style = OrbitTheme.typography.h4)
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+                        ) {
+                            viewModel.historyEntries.take(10).forEach { entry ->
+                                OrbitCard(
+                                    color = OrbitTheme.colors.surfaceSunken,
+                                    modifier = Modifier
+                                        .width(140.dp)
+                                        .clickable { viewModel.openHistory(entry) },
+                                ) {
+                                    Column(
+                                        verticalArrangement = Arrangement.spacedBy(
+                                            OrbitTheme.spacing.xxs,
+                                        ),
+                                    ) {
+                                        OrbitBadge(
+                                            text = entry.kind,
+                                            tone = when (entry.kind) {
+                                                "search" -> OrbitTone.Info
+                                                "download" -> OrbitTone.Success
+                                                else -> OrbitTone.Neutral
+                                            },
+                                        )
+                                        OrbitText(
+                                            text = entry.title,
+                                            style = OrbitTheme.typography.caption,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                when (val state = resolveState) {
+                    is ResolveUiState.Idle -> Unit
+
+                    is ResolveUiState.Working -> Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+                    ) {
+                        OrbitSpinner(size = OrbitTheme.sizes.iconMd)
+                        OrbitText(
+                            text = if (viewModel.searchMode) {
+                                "Searching YouTube…"
+                            } else {
+                                "Analyzing link…"
+                            },
+                            style = OrbitTheme.typography.bodySmall,
+                            color = OrbitTheme.colors.textSecondary,
+                        )
+                    }
+
+                    is ResolveUiState.Error -> FileError(
+                        title = "Could not use that link",
+                        message = state.message,
+                        onRetry = viewModel::resolve,
+                    )
+
+                    is ResolveUiState.Ready -> AnalysisPanel(
+                        candidates = state.candidates,
+                        selected = selectedQuality,
+                        onSelect = onSelectQuality,
+                        onWatch = { viewModel.preview(it, state.candidates) },
+                        onDownload = {
+                            viewModel.enqueue(it, clearInput = false)
+                            onGoDownloads()
+                        },
+                        onDownloadAll = {
+                            viewModel.enqueueAll(state.candidates)
+                            onGoDownloads()
+                        },
+                        onDismiss = viewModel::dismissResolve,
+                    )
+
+                    is ResolveUiState.Playlist -> PlaylistPicker(
+                        state = state,
+                        onToggle = viewModel::togglePlaylistEntry,
+                        onSelectAll = viewModel::selectAllPlaylist,
+                        onClearSelection = viewModel::clearPlaylistSelection,
+                        onQuality = viewModel::setPlaylistQuality,
+                        onDownloadSelected = {
+                            viewModel.enqueueSelectedPlaylist()
+                            onGoDownloads()
+                        },
+                        onPlayEntry = viewModel::playPlaylistEntry,
+                        onFilter = viewModel::setPlaylistFilter,
+                        onMinDuration = viewModel::setMinDuration,
+                        onDismiss = viewModel::dismissResolve,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlatformRow() {
+    val platforms = listOf(
+        "YouTube" to OrbitIcons.Video,
+        "Facebook" to OrbitIcons.Link,
+        "Instagram" to OrbitIcons.ImageFile,
+        "TikTok" to OrbitIcons.Video,
+        "X" to OrbitIcons.Link,
+        "Vimeo" to OrbitIcons.Video,
+        "More" to OrbitIcons.OverflowHorizontal,
+    )
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+    ) {
+        platforms.forEach { (name, icon) ->
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xs),
+                modifier = Modifier.width(68.dp),
+            ) {
+                Box(
+                    Modifier
+                        .size(44.dp)
+                        .clip(OrbitTheme.radius.shapeMd)
+                        .background(OrbitTheme.colors.surfaceElevated),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    OrbitIcon(
+                        icon = icon,
+                        contentDescription = name,
+                        size = 20.dp,
+                        tint = OrbitTheme.colors.accent,
+                    )
+                }
+                OrbitText(
+                    text = name,
+                    style = OrbitTheme.typography.caption,
+                    color = OrbitTheme.colors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AnalysisPanel(
+    candidates: List<ResolvedMedia>,
+    selected: ResolvedMedia?,
+    onSelect: (ResolvedMedia) -> Unit,
+    onWatch: (ResolvedMedia) -> Unit,
+    onDownload: (ResolvedMedia) -> Unit,
+    onDownloadAll: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val primary = selected ?: candidates.firstOrNull() ?: return
+    val kind = mediaKindFromMime(primary.mimeType)
+
+    Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md)) {
+        OrbitCard(color = OrbitTheme.colors.surfaceElevated) {
+            Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
+                when (kind) {
+                    MediaKind.Audio -> Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .background(OrbitTheme.colors.surfaceSunken, OrbitTheme.radius.shapeMd)
+                            .padding(OrbitTheme.spacing.xxl),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        OrbitIconTile(
+                            icon = OrbitIcons.Audio,
+                            size = OrbitTheme.sizes.thumbnail,
+                            iconSize = OrbitTheme.sizes.iconLg,
+                        )
+                    }
+                    else -> VideoThumbnailWide(
+                        thumbnailUrl = primary.thumbnailUrl,
+                        contentDescription = primary.title,
+                    )
+                }
+                OrbitText(
+                    text = primary.title,
+                    style = OrbitTheme.typography.h3,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xs)) {
+                    OrbitBadge(
+                        text = when (kind) {
+                            MediaKind.Video -> "Video"
+                            MediaKind.Audio -> "Audio"
+                            MediaKind.Image -> "Image"
+                            MediaKind.File -> "File"
+                        },
+                        tone = OrbitTone.Accent,
+                        showDot = true,
+                    )
+                    primary.serviceName?.let { OrbitBadge(text = it, tone = OrbitTone.Neutral) }
+                    primary.qualityLabel?.let { OrbitBadge(text = it, tone = OrbitTone.Info) }
+                }
+            }
+        }
+
+        OrbitCard {
+            Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
+                OrbitText(text = "Detected information", style = OrbitTheme.typography.h4)
+                InfoLine("Platform", primary.serviceName ?: "Web")
+                InfoLine(
+                    "Quality",
+                    primary.qualityLabel ?: primary.mimeType.substringAfter('/').uppercase(),
+                )
+                InfoLine(
+                    "Size",
+                    if (primary.sizeBytes > 0) formatBytes(primary.sizeBytes) else "Unknown",
+                )
+                if (primary.resumable) InfoLine("Resume", "Supported")
+            }
+        }
+
+        if (candidates.size > 1) {
+            OrbitCard {
+                Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
+                    OrbitText(text = "Download options", style = OrbitTheme.typography.h4)
+                    candidates.forEach { media ->
+                        val isSelected = selected?.mediaUrl == media.mediaUrl &&
+                            selected.qualityLabel == media.qualityLabel
+                        QualityRow(
+                            media = media,
+                            selected = isSelected,
+                            onClick = { onSelect(media) },
+                        )
+                    }
+                }
+            }
+        }
+
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+        ) {
+            OrbitButton(
+                text = "Watch",
+                onClick = { onWatch(primary) },
+                variant = OrbitButtonVariant.Secondary,
+                leadingIcon = OrbitIcons.Play,
+                modifier = Modifier.weight(1f),
+            )
+            OrbitButton(
+                text = "Start Download",
+                onClick = { onDownload(primary) },
+                leadingIcon = OrbitIcons.Download,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        if (candidates.size > 1) {
+            OrbitButton(
+                text = "Download all formats",
+                onClick = onDownloadAll,
+                variant = OrbitButtonVariant.Ghost,
+                size = OrbitButtonSize.Small,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        OrbitButton(
+            text = "Dismiss",
+            onClick = onDismiss,
+            variant = OrbitButtonVariant.Ghost,
+            size = OrbitButtonSize.Small,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun QualityRow(
+    media: ResolvedMedia,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val kind = mediaKindFromMime(media.mimeType)
+    val borderColor = if (selected) OrbitTheme.colors.accent else OrbitTheme.colors.borderSubtle
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(OrbitTheme.radius.shapeMd)
+            .background(
+                if (selected) OrbitTheme.colors.accent.copy(alpha = 0.12f)
+                else OrbitTheme.colors.surfaceSunken,
+            )
+            .then(
+                if (selected) {
+                    Modifier.border(1.dp, OrbitTheme.colors.accent, OrbitTheme.radius.shapeMd)
+                } else {
+                    Modifier
+                },
+            )
+            .clickable(onClick = onClick)
+            .padding(OrbitTheme.spacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+    ) {
+        Box(
+            Modifier
+                .size(18.dp)
+                .clip(CircleShape)
+                .border(2.dp, borderColor, CircleShape)
+                .padding(3.dp)
+                .then(
+                    if (selected) {
+                        Modifier.background(OrbitTheme.colors.accent, CircleShape)
+                    } else {
+                        Modifier
+                    },
+                ),
+        )
+        Column(Modifier.weight(1f)) {
+            OrbitText(
+                text = media.qualityLabel
+                    ?: when (kind) {
+                        MediaKind.Audio -> "Audio"
+                        MediaKind.Image -> "Image"
+                        else -> media.mimeType.substringAfter('/').uppercase()
+                    },
+                style = OrbitTheme.typography.body,
+            )
+            val detail = buildString {
+                if (media.sizeBytes > 0) append(formatBytes(media.sizeBytes))
+                if (media.videoOnly) {
+                    if (isNotEmpty()) append(" · ")
+                    append("video only")
+                }
+            }
+            if (detail.isNotBlank()) {
+                OrbitText(
+                    text = detail,
+                    style = OrbitTheme.typography.caption,
+                    color = OrbitTheme.colors.textMuted,
+                )
+            }
+        }
+        if (selected) {
+            OrbitBadge(text = "Selected", tone = OrbitTone.Accent, showDot = true)
+        }
+    }
+}
+
+@Composable
+private fun InfoLine(label: String, value: String) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        OrbitText(
+            text = label,
+            style = OrbitTheme.typography.bodySmall,
+            color = OrbitTheme.colors.textMuted,
+        )
+        OrbitText(text = value, style = OrbitTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+private fun DownloadsTab(
+    downloads: List<DownloadItem>,
+    filter: Int,
+    onFilter: (Int) -> Unit,
+    activeCount: Int,
+    completedCount: Int,
+    failedCount: Int,
+    viewModel: VideoDownloaderViewModel,
+) {
+    val filtered = when (filter) {
+        1 -> downloads.filter { it.status == DownloadStatus.Completed }
+        2 -> downloads.filter { it.status == DownloadStatus.Failed }
+        else -> downloads.filter { it.isActive || it.status == DownloadStatus.Paused }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        OrbitTabs(
+            tabs = listOf(
+                if (activeCount > 0) "Downloading $activeCount" else "Downloading",
+                if (completedCount > 0) "Completed $completedCount" else "Completed",
+                if (failedCount > 0) "Failed $failedCount" else "Failed",
+            ),
+            selectedIndex = filter,
+            onSelect = onFilter,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = OrbitTheme.spacing.md),
+            scrollable = true,
+        )
+
+        Column(
+            Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(OrbitTheme.spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md),
+        ) {
+            if (filtered.isEmpty()) {
+                OrbitEmptyState(
+                    title = when (filter) {
+                        1 -> "No completed downloads"
+                        2 -> "No failed downloads"
+                        else -> "Nothing downloading"
+                    },
+                    description = "Paste a link on Home and tap Analyze.",
+                    icon = OrbitIcons.Download,
+                    compact = true,
+                )
+            } else {
+                QueueList(
+                    downloads = filtered,
+                    expandedGroupId = viewModel.expandedPlaylistGroupId,
+                    onToggleGroup = viewModel::togglePlaylistGroup,
+                    onPauseGroup = viewModel::pauseGroup,
+                    onResumeGroup = viewModel::resumeGroup,
+                    onPlay = { viewModel.play(it) },
+                    onPause = { viewModel.pause(it.id) },
+                    onResume = { viewModel.resume(it.id) },
+                    onRetry = { viewModel.retry(it.id) },
+                    onCancel = { viewModel.cancel(it.id) },
+                    onRemove = { viewModel.removeCompleted(it.id) },
+                )
+            }
         }
     }
 }
