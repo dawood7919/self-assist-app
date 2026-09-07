@@ -402,7 +402,7 @@ private fun ScreenOptions(
             Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.lg)) {
                 OrbitCard(color = OrbitTheme.colors.surfaceElevated) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md)) {
-                        VideoThumbnail(thumbnailUrl = primary.thumbnailUrl, size = 56.dp, contentDescription = null)
+                        VideoThumbnail(thumbnailUrl = primary.thumbnailUrl, localPath = null, size = 56.dp, contentDescription = null)
                         Column(Modifier.weight(1f)) {
                             OrbitText(text = primary.title, style = OrbitTheme.typography.h4, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             OrbitText(text = primary.serviceName ?: "", style = OrbitTheme.typography.caption, color = OrbitTheme.colors.textMuted)
