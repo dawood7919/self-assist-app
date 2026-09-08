@@ -7,6 +7,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -238,7 +239,7 @@ fun VideoDownloaderTool(
                                 onRetry = viewModel::resolve,
                             )
 
-                            is ResolveUiState.Ready -> ResolvedCandidates(
+                            is ResolveUiState.Ready -> ResolveResultSection(
                                 candidates = state.candidates,
                                 onDownload = { viewModel.enqueue(it) },
                                 onDownloadAll = { viewModel.enqueueAll(state.candidates) },
@@ -360,7 +361,11 @@ private fun ResolvedCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 OrbitText(
-                    text = media.mimeType,
+                    text = listOfNotNull(
+                        media.quality,
+                        formatBytes(media.sizeBytes).takeIf { media.sizeBytes > 0 },
+                        media.mimeType.substringAfter('/').uppercase(),
+                    ).joinToString(" · "),
                     style = OrbitTheme.typography.caption,
                     color = OrbitTheme.colors.textMuted,
                     maxLines = 1,
@@ -390,7 +395,7 @@ private fun ResolvedCard(
                 OrbitBadge("No resume", tone = OrbitTone.Warning, showDot = true)
             }
             if (media.mimeType.startsWith("audio")) {
-                OrbitBadge("Audio", tone = OrbitTone.Neutral)
+                OrbitBadge("Audio only", tone = OrbitTone.Neutral)
             }
         }
         Row(
@@ -418,22 +423,146 @@ private fun ResolvedCard(
 }
 
 /**
- * Everything the pasted link turned out to hold.
- *
- * A page usually carries more than one video, so the tool shows the lot and
- * lets the user pick rather than guessing which one they meant. Each can be
- * previewed before committing to the download.
+ * The design's quality-selection panel: every stream the link offers, best
+ * first, one selectable row each with its real size. Video rows and the
+ * audio-only section are separated the way the mock separates them.
  */
 @Composable
-private fun ResolvedCandidates(
+private fun QualityPicker(
+    candidates: List<ResolvedMedia>,
+    onDownload: (ResolvedMedia) -> Unit,
+    onPreview: (ResolvedMedia) -> Unit,
+) {
+    val videos = candidates.filterNot { it.mimeType.startsWith("audio") }
+    val audio = candidates.filter { it.mimeType.startsWith("audio") }
+
+    OrbitCard {
+        OrbitText(
+            text = "Video quality",
+            style = OrbitTheme.typography.h4,
+        )
+        Column(
+            modifier = Modifier.padding(top = OrbitTheme.spacing.sm),
+            verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xs),
+        ) {
+            videos.forEachIndexed { index, media ->
+                QualityRow(
+                    media = media,
+                    best = index == 0,
+                    onDownload = { onDownload(media) },
+                    onPreview = { onPreview(media) },
+                )
+            }
+        }
+
+        if (audio.isNotEmpty()) {
+            OrbitText(
+                text = "Audio only",
+                style = OrbitTheme.typography.h4,
+                modifier = Modifier.padding(top = OrbitTheme.spacing.lg),
+            )
+            Column(
+                modifier = Modifier.padding(top = OrbitTheme.spacing.sm),
+                verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xs),
+            ) {
+                audio.forEach { media ->
+                    QualityRow(
+                        media = media,
+                        best = false,
+                        onDownload = { onDownload(media) },
+                        onPreview = { onPreview(media) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QualityRow(
+    media: ResolvedMedia,
+    best: Boolean,
+    onDownload: () -> Unit,
+    onPreview: () -> Unit,
+) {
+    OrbitCard(
+        onClick = onDownload,
+        color = OrbitTheme.colors.surface,
+        contentPadding = PaddingValues(OrbitTheme.spacing.md),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md),
+        ) {
+            OrbitIconTile(
+                icon = if (media.mimeType.startsWith("audio")) OrbitIcons.Audio else OrbitIcons.Video,
+                size = OrbitTheme.sizes.iconLg,
+                iconSize = OrbitTheme.sizes.iconMd,
+                contentDescription = null,
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xxs),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+                ) {
+                    OrbitText(
+                        text = media.quality ?: media.fileName,
+                        style = OrbitTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (best) {
+                        OrbitBadge("Best quality", tone = OrbitTone.Success, showDot = true)
+                    }
+                }
+                OrbitText(
+                    text = formatBytes(media.sizeBytes),
+                    style = OrbitTheme.typography.caption,
+                    color = OrbitTheme.colors.textMuted,
+                )
+            }
+            OrbitIconButton(
+                icon = OrbitIcons.Play,
+                contentDescription = "Preview this quality",
+                onClick = onPreview,
+                size = OrbitButtonSize.Small,
+            )
+            OrbitIconButton(
+                icon = OrbitIcons.Download,
+                contentDescription = "Download this quality",
+                onClick = onDownload,
+                size = OrbitButtonSize.Small,
+            )
+        }
+    }
+}
+
+/**
+ * Everything the pasted link turned out to hold, in the shape the design
+ * prescribes: the analysed video card on top, then the quality panel — one
+ * row per stream with its real size — and the audio-only section under it.
+ * Only when a page held several unrelated videos does the tool fall back to
+ * the flat card list, because there is no single "quality" to choose between.
+ */
+@Composable
+private fun ResolveResultSection(
     candidates: List<ResolvedMedia>,
     onDownload: (ResolvedMedia) -> Unit,
     onDownloadAll: () -> Unit,
     onPreview: (ResolvedMedia) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
-        if (candidates.size > 1) {
+    val hasQualityPanel = candidates.size > 1 &&
+        candidates.count { !it.mimeType.startsWith("audio") } > 1
+    val hero = candidates.firstOrNull { !it.mimeType.startsWith("audio") }
+        ?: candidates.firstOrNull()
+
+    Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md)) {
+        if (!hasQualityPanel && candidates.size > 1) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -459,13 +588,28 @@ private fun ResolvedCandidates(
                 )
             }
         }
-        candidates.forEach { media ->
+
+        if (hasQualityPanel && hero != null) {
             ResolvedCard(
-                media = media,
-                onDownload = { onDownload(media) },
-                onPreview = { onPreview(media) },
+                media = hero,
+                onDownload = { onDownload(hero) },
+                onPreview = { onPreview(hero) },
                 onDismiss = onDismiss,
             )
+            QualityPicker(
+                candidates = candidates,
+                onDownload = onDownload,
+                onPreview = onPreview,
+            )
+        } else {
+            candidates.forEach { media ->
+                ResolvedCard(
+                    media = media,
+                    onDownload = { onDownload(media) },
+                    onPreview = { onPreview(media) },
+                    onDismiss = onDismiss,
+                )
+            }
         }
     }
 }

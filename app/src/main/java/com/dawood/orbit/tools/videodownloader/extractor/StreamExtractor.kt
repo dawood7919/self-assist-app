@@ -83,25 +83,26 @@ object StreamExtractor {
                         title = info.name.orEmpty().ifBlank { "Video" },
                         fileName = fileName(info.name, stream.format?.suffix ?: "mp4", stream.getResolution()),
                         mimeType = stream.format?.mimeType ?: "video/mp4",
-                        sizeBytes = -1L,
+                        sizeBytes = stream.contentLength,
                         resumable = true,
                         thumbnailUrl = thumbnail,
+                        quality = stream.getResolution(),
                     )
                 }
 
             val audio = info.audioStreams
                 .distinctBy { it.content }
                 .sortedByDescending { it.averageBitrate }
-                .take(2)
                 .map { stream ->
                     ResolvedMedia(
                         mediaUrl = stream.content,
                         title = "${info.name.orEmpty().ifBlank { "Audio" }} (audio only)",
                         fileName = fileName(info.name, stream.format?.suffix ?: "m4a", audioLabel(stream)),
                         mimeType = stream.format?.mimeType ?: "audio/mp4",
-                        sizeBytes = -1L,
+                        sizeBytes = stream.contentLength,
                         resumable = true,
                         thumbnailUrl = thumbnail,
+                        quality = audioLabel(stream),
                     )
                 }
 

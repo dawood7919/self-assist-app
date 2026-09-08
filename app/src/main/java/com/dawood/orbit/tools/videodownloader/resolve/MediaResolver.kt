@@ -24,6 +24,11 @@ data class ResolvedMedia(
     val resumable: Boolean,
     /** Poster image for the video, when the page offered one. */
     val thumbnailUrl: String? = null,
+    /**
+     * Human quality label as the extractor reported it — "1080p60",
+     * "320kbps" — or null when a plain page offered no such detail.
+     */
+    val quality: String? = null,
 )
 
 sealed interface ResolveResult {
