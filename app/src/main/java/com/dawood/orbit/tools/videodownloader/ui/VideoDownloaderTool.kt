@@ -16,6 +16,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -78,6 +81,20 @@ fun VideoDownloaderTool(
 
     val active = downloads.filter { it.isActive }
     val finished = downloads.filter { it.status == DownloadStatus.Completed }
+
+    // The queue is browsed the way the design shows it: by what is happening
+    // right now versus what already landed or failed. "All" keeps the older,
+    // flat view for people who just want the whole list.
+    var queueTab by rememberSaveable { mutableIntStateOf(0) }
+    val queueTabs = listOf("All", "Downloading", "Completed", "Failed")
+    val filtered = downloads.sortedByDescending { it.createdAt }.filter { item ->
+        when (queueTab) {
+            1 -> item.isActive
+            2 -> item.status == DownloadStatus.Completed
+            3 -> item.status == DownloadStatus.Failed
+            else -> true
+        }
+    }
 
     // Without this the transfer still runs, but the user gets no progress
     // notification, which on a long download looks like nothing is happening.
@@ -184,7 +201,8 @@ fun VideoDownloaderTool(
                             value = viewModel.url,
                             onValueChange = viewModel::onUrlChange,
                             label = "Video link",
-                            placeholder = "https://…",
+                            placeholder = "Paste video link here…",
+                            helperText = "Direct media links, or any page that exposes its video openly.",
                             leadingIcon = OrbitIcons.Link,
                             trailing = {
                                 OrbitIconButton(
@@ -235,7 +253,7 @@ fun VideoDownloaderTool(
                         ) {
                             Box(Modifier.weight(1f))
                             OrbitButton(
-                                text = "Fetch",
+                                text = "Analyze",
                                 onClick = viewModel::resolve,
                                 leadingIcon = OrbitIcons.Search,
                                 enabled = viewModel.url.isNotBlank(),
@@ -249,16 +267,32 @@ fun VideoDownloaderTool(
                             title = "Queue",
                             subtitle = if (downloads.isEmpty()) null else "${downloads.size} items",
                         )
-                        if (downloads.isEmpty()) {
+                        if (downloads.isNotEmpty()) {
+                            OrbitTabs(
+                                tabs = queueTabs.mapIndexed { index, label ->
+                                    val count = when (index) {
+                                        1 -> active.size
+                                        2 -> downloads.count { it.status == DownloadStatus.Completed }
+                                        3 -> downloads.count { it.status == DownloadStatus.Failed }
+                                        else -> downloads.size
+                                    }
+                                    if (count > 0) "$label · $count" else label
+                                },
+                                selectedIndex = queueTab,
+                                onSelect = { queueTab = it },
+                            )
+                        }
+                        if (filtered.isEmpty()) {
                             OrbitEmptyState(
-                                title = "Nothing downloading",
+                                title = if (downloads.isEmpty()) "Nothing downloading"
+                                else "Nothing in \"${queueTabs[queueTab]}\"",
                                 description = "Paste a link above and it will appear here with " +
                                     "progress you can pause and pick back up.",
                                 icon = OrbitIcons.Download,
                                 compact = true,
                             )
                         } else {
-                            downloads.sortedByDescending { it.createdAt }.forEach { item ->
+                            filtered.forEach { item ->
                                 DownloadRow(
                                     item = item,
                                     onPlay = { viewModel.play(item) },
@@ -325,11 +359,7 @@ private fun ResolvedCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 OrbitText(
-                    text = buildString {
-                        append(media.mimeType)
-                        if (media.sizeBytes > 0) append(" · ${formatBytes(media.sizeBytes)}")
-                        if (!media.resumable) append(" · no resume")
-                    },
+                    text = media.mimeType,
                     style = OrbitTheme.typography.caption,
                     color = OrbitTheme.colors.textMuted,
                     maxLines = 1,
@@ -342,6 +372,26 @@ private fun ResolvedCard(
                 size = OrbitButtonSize.Small,
             )
         }
+        // The detected-information block from the design: what the link
+        // turned out to hold, spelled out before anything is committed.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = OrbitTheme.spacing.md),
+            horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+        ) {
+            if (media.sizeBytes > 0) {
+                OrbitBadge("Size ${formatBytes(media.sizeBytes)}", tone = OrbitTone.Info)
+            }
+            if (media.resumable) {
+                OrbitBadge("Resumable", tone = OrbitTone.Success, showDot = true)
+            } else {
+                OrbitBadge("No resume", tone = OrbitTone.Warning, showDot = true)
+            }
+            if (media.mimeType.startsWith("audio")) {
+                OrbitBadge("Audio", tone = OrbitTone.Neutral)
+            }
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -349,12 +399,6 @@ private fun ResolvedCard(
             horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (media.resumable) {
-                OrbitBadge("Resumable", tone = OrbitTone.Success, showDot = true)
-            } else {
-                OrbitBadge("No resume", tone = OrbitTone.Warning, showDot = true)
-            }
-            Box(Modifier.weight(1f))
             OrbitButton(
                 text = "Preview",
                 onClick = onPreview,
@@ -362,6 +406,7 @@ private fun ResolvedCard(
                 size = OrbitButtonSize.Small,
                 leadingIcon = OrbitIcons.Play,
             )
+            Box(Modifier.weight(1f))
             OrbitButton(
                 text = "Download",
                 onClick = onDownload,
@@ -511,11 +556,42 @@ private fun DownloadRow(
         }
 
         if (item.status != DownloadStatus.Completed) {
-            Box(
-                Modifier
+            Column(
+                modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = OrbitTheme.spacing.md),
+                verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xxs),
             ) {
+                // The three numbers a downloader is judged on, read at a
+                // glance: how far along, how fast, how long is left.
+                if (item.status == DownloadStatus.Running) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        item.progress?.let { progress ->
+                            OrbitBadge(
+                                text = "${(progress * 100).toInt()}%",
+                                tone = OrbitTone.Accent,
+                            )
+                        }
+                        if (item.speedBytesPerSecond > 0) {
+                            OrbitText(
+                                text = DownloadService.formatSpeed(item.speedBytesPerSecond),
+                                style = OrbitTheme.typography.caption,
+                                color = OrbitTheme.colors.textSecondary,
+                            )
+                        }
+                        item.etaSeconds?.let { eta ->
+                            OrbitText(
+                                text = "${formatEta(eta)} left",
+                                style = OrbitTheme.typography.caption,
+                                color = OrbitTheme.colors.textMuted,
+                            )
+                        }
+                    }
+                }
                 OrbitProgressBar(progress = item.progress)
             }
         }
