@@ -54,6 +54,7 @@ import com.dawood.orbit.tools.time.TimeTrackerTool
 import com.dawood.orbit.tools.tasks.TasksTool
 import com.dawood.orbit.tools.password.PasswordGeneratorTool
 import com.dawood.orbit.tools.videodownloader.ui.VideoDownloaderTool
+import com.dawood.orbit.tools.cloudbrowser.CloudBrowserTool
 import com.dawood.orbit.tools.registry.ToolRegistry
 import com.dawood.orbit.tools.shell.ToolShell
 
@@ -228,6 +229,7 @@ private fun ToolWorkspaceHost(
         ToolRegistry.Ids.BOOKMARKS -> BookmarksTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.KNOWLEDGE_BASE ->
             KnowledgeBaseTool(tool = tool, onBack = onBack, onOpenTool = onOpenTool)
+        ToolRegistry.Ids.CLOUD_BROWSER -> CloudBrowserTool(tool = tool, onBack = onBack)
         else -> ToolShell(tool = tool, onBack = onBack) {
             ToolPlaceholderScreen(tool = tool, onBrowseTools = onBrowseTools)
         }

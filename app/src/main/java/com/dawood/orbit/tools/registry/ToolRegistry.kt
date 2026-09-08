@@ -56,6 +56,7 @@ object ToolRegistry {
         const val AI_ASSISTANT = "ai-assistant"
         const val DOC_ANALYSIS = "doc-analysis"
         const val OCR = "ocr"
+        const val CLOUD_BROWSER = "cloud-browser"
     }
 
     val categories: List<ToolCategory> = listOf(
@@ -231,6 +232,16 @@ object ToolRegistry {
             icon = OrbitIcons.Folder,
             categoryId = Categories.DOCUMENTS,
             tags = listOf("files", "browse", "storage"),
+            hasWorkspace = true,
+        ),
+        Tool(
+            id = Ids.CLOUD_BROWSER,
+            name = "Cloud Browser",
+            description = "Browse through your VPS",
+            icon = OrbitIcons.CloudUpload,
+            categoryId = Categories.UTILITIES,
+            tags = listOf("vps", "remote browser", "ssh", "cloud", "sessions"),
+            status = ToolStatus.Beta,
             hasWorkspace = true,
         ),
 
