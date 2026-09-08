@@ -77,7 +77,7 @@ object StreamExtractor {
             // service gave it one; anything else stays unknown and the
             // downloader learns the real length from the response itself.
             fun sizeOf(stream: org.schabi.newpipe.extractor.stream.Stream): Long =
-                runCatching { stream.itagItem.contentLength }.getOrDefault(-1L)
+                runCatching { stream.itagItem?.contentLength ?: -1L }.getOrDefault(-1L)
 
             val muxed = info.videoStreams
                 .filterNot { it.isVideoOnly }
