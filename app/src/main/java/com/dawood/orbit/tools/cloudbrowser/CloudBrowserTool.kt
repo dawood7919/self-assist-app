@@ -116,8 +116,8 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
         OrbitButton("Launch Browser", onLaunch, fullWidth = true, leadingIcon = OrbitIcons.OpenExternal, size = OrbitButtonSize.Large)
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
-        OrbitButton("Manage Server", { onNavigate(CloudPage.Settings) }, Modifier.weight(1f), OrbitButtonVariant.Secondary, OrbitButtonSize.Small, leadingIcon = OrbitIcons.Tune)
-        OrbitButton("Sessions", { onNavigate(CloudPage.Sessions) }, Modifier.weight(1f), OrbitButtonVariant.Secondary, OrbitButtonSize.Small, leadingIcon = OrbitIcons.Layers)
+        OrbitButton("Manage Server", { onNavigate(CloudPage.Settings) }, modifier = Modifier.weight(1f), variant = OrbitButtonVariant.Secondary, size = OrbitButtonSize.Small, leadingIcon = OrbitIcons.Tune)
+        OrbitButton("Sessions", { onNavigate(CloudPage.Sessions) }, modifier = Modifier.weight(1f), variant = OrbitButtonVariant.Secondary, size = OrbitButtonSize.Small, leadingIcon = OrbitIcons.Layers)
     }
     ConnectionDiagram()
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
@@ -170,11 +170,11 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             OrbitText("● ${CloudBrowserEngine.connectionLabel(s)}", style = OrbitTheme.typography.caption, color = OrbitTheme.colors.success)
-            OrbitButton("Controls", onControls, OrbitButtonVariant.Tertiary, OrbitButtonSize.Small, leadingIcon = OrbitIcons.Tune)
+            OrbitButton("Controls", onControls, variant = OrbitButtonVariant.Tertiary, size = OrbitButtonSize.Small, leadingIcon = OrbitIcons.Tune)
         }
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
-        listOf("Mouse", "Touch", "Keyboard", "Fullscreen").forEach { OrbitButton(it, {}, Modifier.weight(1f), OrbitButtonVariant.Secondary, OrbitButtonSize.Small) }
+        listOf("Mouse", "Touch", "Keyboard", "Fullscreen").forEach { OrbitButton(it, {}, modifier = Modifier.weight(1f), variant = OrbitButtonVariant.Secondary, size = OrbitButtonSize.Small) }
     }
 }
 
@@ -192,7 +192,7 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
 @Composable private fun SessionsPage(onLaunch: () -> Unit) {
     OrbitText("Browser Sessions", style = OrbitTheme.typography.h2)
     listOf(CloudBrowserEngine.Session("Session 01", "Google Chrome", "Active", "01:24:35"), CloudBrowserEngine.Session("Session 02", "Chromium", "Idle", "00:42:11")).forEach { session ->
-        OrbitCard { Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { OrbitText(session.name, style = OrbitTheme.typography.h3); OrbitText("${session.browser}  •  ${session.duration}", style = OrbitTheme.typography.caption, color = OrbitTheme.colors.textMuted) }; OrbitBadge(session.state, tone = if (session.state == "Active") OrbitTone.Success else OrbitTone.Neutral) }; Row(horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) { OrbitButton(if (session.state == "Idle") "Resume" else "Open", onLaunch, OrbitButtonVariant.Secondary, OrbitButtonSize.Small); OrbitButton("Close", {}, OrbitButtonVariant.Ghost, OrbitButtonSize.Small) } }
+        OrbitCard { Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { OrbitText(session.name, style = OrbitTheme.typography.h3); OrbitText("${session.browser}  •  ${session.duration}", style = OrbitTheme.typography.caption, color = OrbitTheme.colors.textMuted) }; OrbitBadge(session.state, tone = if (session.state == "Active") OrbitTone.Success else OrbitTone.Neutral) }; Row(horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) { OrbitButton(if (session.state == "Idle") "Resume" else "Open", onLaunch, variant = OrbitButtonVariant.Secondary, size = OrbitButtonSize.Small); OrbitButton("Close", {}, variant = OrbitButtonVariant.Ghost, size = OrbitButtonSize.Small) } }
     }
     OrbitButton("New Browser Session", onLaunch, fullWidth = true, leadingIcon = OrbitIcons.Add)
 }
@@ -204,11 +204,11 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
 }
 @Composable private fun MonitorCard(title: String, value: String, progress: Float) { OrbitCard(Modifier.weight(1f)) { OrbitText(title, style = OrbitTheme.typography.caption, color = OrbitTheme.colors.textMuted); OrbitProgressRing(progress, Modifier.padding(vertical = OrbitTheme.spacing.sm), label = value); OrbitText(value, style = OrbitTheme.typography.h3) } }
 
-@Composable private fun FilesPage() { OrbitText("VPS Files", style = OrbitTheme.typography.h2); OrbitText("/home/user/downloads/", style = OrbitTheme.typography.caption, color = OrbitTheme.colors.accent); listOf("Downloads", "Documents", "Screenshots", "Browser Profiles", "example.pdf", "movie.mp4", "archive.zip").forEach { OrbitListItem(it, leading = { OrbitIcon(if (it.contains('.')) OrbitIcons.File else OrbitIcons.Folder, null, tint = OrbitTheme.colors.accent) }, trailing = { OrbitButton("More", {}, OrbitButtonVariant.Ghost, OrbitButtonSize.Small) }) }; OrbitButton("Upload from Phone", {}, fullWidth = true, variant = OrbitButtonVariant.Secondary, leadingIcon = OrbitIcons.Upload) }
+@Composable private fun FilesPage() { OrbitText("VPS Files", style = OrbitTheme.typography.h2); OrbitText("/home/user/downloads/", style = OrbitTheme.typography.caption, color = OrbitTheme.colors.accent); listOf("Downloads", "Documents", "Screenshots", "Browser Profiles", "example.pdf", "movie.mp4", "archive.zip").forEach { OrbitListItem(it, leading = { OrbitIcon(if (it.contains('.')) OrbitIcons.File else OrbitIcons.Folder, null, tint = OrbitTheme.colors.accent) }, trailing = { OrbitButton("More", {}, variant = OrbitButtonVariant.Ghost, size = OrbitButtonSize.Small) }) }; OrbitButton("Upload from Phone", {}, fullWidth = true, variant = OrbitButtonVariant.Secondary, leadingIcon = OrbitIcons.Upload) }
 
 @Composable private fun ConnectionPage(s: CloudBrowserEngine.ServerSnapshot, onConnected: () -> Unit) { OrbitText("Connect VPS", style = OrbitTheme.typography.h2); OrbitTextField(s.name, {}, label = "Server Name"); OrbitTextField(s.ip, {}, label = "Host / IP Address"); OrbitTextField("22", {}, label = "Port"); OrbitTextField("SSH Key", {}, label = "Authentication Method"); OrbitCard { OrbitText("● Server Online", style = OrbitTheme.typography.h3, color = OrbitTheme.colors.success); OrbitText("Latency ${s.latency}  •  CPU ${s.cpu}%  •  RAM ${s.ramUsedGb} / ${s.ramTotalGb} GB", style = OrbitTheme.typography.caption, color = OrbitTheme.colors.textMuted) }; OrbitButton("Test Connection", {}, fullWidth = true, variant = OrbitButtonVariant.Secondary); OrbitButton("Connect VPS", onConnected, fullWidth = true) }
 
 @Composable private fun SettingsPanel() { listOf("Auto Reconnect", "Hardware Acceleration", "Keep Browser Running", "Data Saver Mode").forEach { OrbitListItem(it, trailing = { OrbitSwitch(true, {}) }) }; OrbitText("Default quality  •  Balanced\nResolution  •  1920 × 1080\nConnection security  •  Encrypted", style = OrbitTheme.typography.caption, color = OrbitTheme.colors.textMuted) }
 @Composable private fun CloudNavigation(current: CloudPage, onSelect: (CloudPage) -> Unit) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { listOf(CloudPage.Home to "Home", CloudPage.Browser to "Browser", CloudPage.Sessions to "Sessions", CloudPage.Monitor to "Monitor", CloudPage.Files to "Files").forEach { (page, label) -> OrbitButton(label, { onSelect(page) }, variant = if (page == current) OrbitButtonVariant.Tertiary else OrbitButtonVariant.Ghost, size = OrbitButtonSize.Small) } } }
 @Composable private fun Metric(label: String, value: String) { Column { OrbitText(label, style = OrbitTheme.typography.caption, color = OrbitTheme.colors.textMuted); OrbitText(value, style = OrbitTheme.typography.label) } }
-@Composable private fun QuickLink(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) { OrbitButton(label, onClick, Modifier.weight(1f), OrbitButtonVariant.Secondary, OrbitButtonSize.Medium, leadingIcon = icon) }
+@Composable private fun QuickLink(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) { OrbitButton(label, onClick, modifier = Modifier.weight(1f), variant = OrbitButtonVariant.Secondary, size = OrbitButtonSize.Medium, leadingIcon = icon) }
