@@ -1,15 +1,15 @@
 package com.dawood.orbit.tools.cloudbrowser
 
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertTrue
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
 
 class CloudBrowserEngineTest {
     @Test
     fun ramProgressUsesServerCapacity() {
         val snapshot = CloudBrowserEngine.ServerSnapshot(ramUsedGb = 2.4, ramTotalGb = 8.0)
 
-        assertEquals(0.3f, CloudBrowserEngine.ramProgress(snapshot))
+        assertEquals(0.3f, CloudBrowserEngine.ramProgress(snapshot), 0.0001f)
     }
 
     @Test
