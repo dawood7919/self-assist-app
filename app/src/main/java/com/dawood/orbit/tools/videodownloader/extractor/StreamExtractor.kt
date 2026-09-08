@@ -73,6 +73,12 @@ object StreamExtractor {
             val info = StreamInfo.getInfo(service, url)
             val thumbnail = info.thumbnails?.maxByOrNull { it.height }?.url
 
+            // The extractor reports sizes on its itag record, when the
+            // service gave it one; anything else stays unknown and the
+            // downloader learns the real length from the response itself.
+            fun sizeOf(stream: org.schabi.newpipe.extractor.stream.Stream): Long =
+                runCatching { stream.itagItem.contentLength }.getOrDefault(-1L)
+
             val muxed = info.videoStreams
                 .filterNot { it.isVideoOnly }
                 .distinctBy { it.content }
@@ -83,7 +89,7 @@ object StreamExtractor {
                         title = info.name.orEmpty().ifBlank { "Video" },
                         fileName = fileName(info.name, stream.format?.suffix ?: "mp4", stream.getResolution()),
                         mimeType = stream.format?.mimeType ?: "video/mp4",
-                        sizeBytes = stream.contentLength,
+                        sizeBytes = sizeOf(stream),
                         resumable = true,
                         thumbnailUrl = thumbnail,
                         quality = stream.getResolution(),
@@ -99,7 +105,7 @@ object StreamExtractor {
                         title = "${info.name.orEmpty().ifBlank { "Audio" }} (audio only)",
                         fileName = fileName(info.name, stream.format?.suffix ?: "m4a", audioLabel(stream)),
                         mimeType = stream.format?.mimeType ?: "audio/mp4",
-                        sizeBytes = stream.contentLength,
+                        sizeBytes = sizeOf(stream),
                         resumable = true,
                         thumbnailUrl = thumbnail,
                         quality = audioLabel(stream),
