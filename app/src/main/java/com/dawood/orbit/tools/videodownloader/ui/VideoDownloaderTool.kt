@@ -38,6 +38,7 @@ import com.dawood.orbit.core.designsystem.component.OrbitMenuItem
 import com.dawood.orbit.core.designsystem.component.OrbitProgressBar
 import com.dawood.orbit.core.designsystem.component.OrbitSectionHeader
 import com.dawood.orbit.core.designsystem.component.OrbitSpinner
+import com.dawood.orbit.core.designsystem.component.OrbitTabs
 import com.dawood.orbit.core.designsystem.component.OrbitText
 import com.dawood.orbit.core.designsystem.component.OrbitTextField
 import com.dawood.orbit.core.designsystem.component.OrbitTone
