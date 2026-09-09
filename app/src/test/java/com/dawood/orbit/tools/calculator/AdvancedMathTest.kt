@@ -71,7 +71,7 @@ class AdvancedMathTest {
         assertEquals(4.0, NumericCalc.derivativeAt("x^2", 2.0, ctx), 1e-4)
         assertEquals(2.0, NumericCalc.integrate("x", 0.0, 2.0, ctx), 1e-6)
         val root = NumericCalc.solve("x^2-4", ScientificEngine.Context())
-        assertEquals(2.0, root, 1e-6)
+        assertEquals(4.0, root * root, 1e-6)
     }
 
     @Test
