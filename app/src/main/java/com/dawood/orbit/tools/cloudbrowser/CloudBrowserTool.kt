@@ -121,8 +121,8 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
     }
     ConnectionDiagram()
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
-        QuickLink("Monitor", OrbitIcons.Trending, { onNavigate(CloudPage.Monitor) })
-        QuickLink("VPS Files", OrbitIcons.Folder, { onNavigate(CloudPage.Files) })
+        QuickLink("Monitor", OrbitIcons.Trending, { onNavigate(CloudPage.Monitor) }, Modifier.weight(1f))
+        QuickLink("VPS Files", OrbitIcons.Folder, { onNavigate(CloudPage.Files) }, Modifier.weight(1f))
     }
 }
 
@@ -199,10 +199,10 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
 
 @Composable private fun MonitorPage(s: CloudBrowserEngine.ServerSnapshot) {
     OrbitText("VPS Monitor", style = OrbitTheme.typography.h2)
-    Row(horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) { MonitorCard("CPU Usage", "${s.cpu}%", s.cpu / 100f); MonitorCard("RAM Usage", "${s.ramUsedGb} GB", CloudBrowserEngine.ramProgress(s)) }
+    Row(horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) { MonitorCard("CPU Usage", "${s.cpu}%", s.cpu / 100f, Modifier.weight(1f)); MonitorCard("RAM Usage", "${s.ramUsedGb} GB", CloudBrowserEngine.ramProgress(s), Modifier.weight(1f)) }
     OrbitCard { OrbitText("Network", style = OrbitTheme.typography.h3); OrbitText("Download  245 Mbps     Upload  87 Mbps", style = OrbitTheme.typography.body); OrbitProgressBar(0.64f); OrbitText("Disk  42 GB / 100 GB  •  2 active sessions  •  Uptime 12 days", style = OrbitTheme.typography.caption, color = OrbitTheme.colors.textMuted) }
 }
-@Composable private fun MonitorCard(title: String, value: String, progress: Float) { OrbitCard(Modifier.weight(1f)) { OrbitText(title, style = OrbitTheme.typography.caption, color = OrbitTheme.colors.textMuted); OrbitProgressRing(progress, Modifier.padding(vertical = OrbitTheme.spacing.sm), label = value); OrbitText(value, style = OrbitTheme.typography.h3) } }
+@Composable private fun MonitorCard(title: String, value: String, progress: Float, modifier: Modifier = Modifier) { OrbitCard(modifier) { OrbitText(title, style = OrbitTheme.typography.caption, color = OrbitTheme.colors.textMuted); OrbitProgressRing(progress, Modifier.padding(vertical = OrbitTheme.spacing.sm), label = value); OrbitText(value, style = OrbitTheme.typography.h3) } }
 
 @Composable private fun FilesPage() { OrbitText("VPS Files", style = OrbitTheme.typography.h2); OrbitText("/home/user/downloads/", style = OrbitTheme.typography.caption, color = OrbitTheme.colors.accent); listOf("Downloads", "Documents", "Screenshots", "Browser Profiles", "example.pdf", "movie.mp4", "archive.zip").forEach { OrbitListItem(it, leading = { OrbitIcon(if (it.contains('.')) OrbitIcons.File else OrbitIcons.Folder, null, tint = OrbitTheme.colors.accent) }, trailing = { OrbitButton("More", {}, variant = OrbitButtonVariant.Ghost, size = OrbitButtonSize.Small) }) }; OrbitButton("Upload from Phone", {}, fullWidth = true, variant = OrbitButtonVariant.Secondary, leadingIcon = OrbitIcons.Upload) }
 
@@ -211,4 +211,4 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
 @Composable private fun SettingsPanel() { listOf("Auto Reconnect", "Hardware Acceleration", "Keep Browser Running", "Data Saver Mode").forEach { OrbitListItem(it, trailing = { OrbitSwitch(true, {}) }) }; OrbitText("Default quality  •  Balanced\nResolution  •  1920 × 1080\nConnection security  •  Encrypted", style = OrbitTheme.typography.caption, color = OrbitTheme.colors.textMuted) }
 @Composable private fun CloudNavigation(current: CloudPage, onSelect: (CloudPage) -> Unit) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { listOf(CloudPage.Home to "Home", CloudPage.Browser to "Browser", CloudPage.Sessions to "Sessions", CloudPage.Monitor to "Monitor", CloudPage.Files to "Files").forEach { (page, label) -> OrbitButton(label, { onSelect(page) }, variant = if (page == current) OrbitButtonVariant.Tertiary else OrbitButtonVariant.Ghost, size = OrbitButtonSize.Small) } } }
 @Composable private fun Metric(label: String, value: String) { Column { OrbitText(label, style = OrbitTheme.typography.caption, color = OrbitTheme.colors.textMuted); OrbitText(value, style = OrbitTheme.typography.label) } }
-@Composable private fun QuickLink(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) { OrbitButton(label, onClick, modifier = Modifier.weight(1f), variant = OrbitButtonVariant.Secondary, size = OrbitButtonSize.Medium, leadingIcon = icon) }
+@Composable private fun QuickLink(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit, modifier: Modifier = Modifier) { OrbitButton(label, onClick, modifier = modifier, variant = OrbitButtonVariant.Secondary, size = OrbitButtonSize.Medium, leadingIcon = icon) }

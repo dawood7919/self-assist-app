@@ -62,7 +62,7 @@ object ScientificEngine {
             .replace('÷', '/')
             .replace('−', '-')
             .replace("π", "pi")
-            .replace(',', "")
+            .replace(",", "")
             .trim()
         if (normalised.isEmpty()) return Result.Failure("Nothing to calculate")
         return try {
