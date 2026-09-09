@@ -84,9 +84,15 @@ class ScientificEngineTest {
     }
 
     @Test
+    fun `thousands separators survive alongside argument commas`() {
+        assertEquals(2000.0, value("1,000 + 1,000"), 1e-9)
+        assertEquals(6.0, value("gcd(54, 24)"), 1e-9)
+    }
+
+    @Test
     fun `variable x works for solver paths`() {
         val ctx = deg.copy(variables = mapOf("x" to 4.0))
-        assertEquals(9.0, value("x^2-log(100)+5", ctx), 1e-9)
+        assertEquals(19.0, value("x^2-log(100)+5", ctx), 1e-9)
     }
 
     @Test

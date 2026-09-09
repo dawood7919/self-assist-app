@@ -230,22 +230,53 @@ object NumericCalc {
             return (r as? ScientificEngine.Result.Value)?.number
                 ?: throw IllegalArgumentException("Cannot solve that expression")
         }
-        // Expand a bracket until the sign changes, then bisect.
-        var lo = -10.0
-        var hi = 10.0
+        // Scan for a bracket: symmetric expansion alone can never bracket an
+        // even root such as x^2-4 (f(-10) and f(10) share a sign), so walk
+        // the axis until adjacent samples change sign or hit zero.
+        var range = 10.0
+        repeat(4) {
+            val bracket = scanBracket(::f, range)
+            if (bracket != null) return bisect(::f, bracket.first, bracket.second)
+            range *= 10
+        }
+        throw IllegalArgumentException("No sign change found — no root in range")
+    }
+
+    private fun scanBracket(f: (Double) -> Double, range: Double): Pair<Double, Double>? {
+        val steps = 160
+        val step = 2 * range / steps
+        var x = -range
+        var fx = f(x)
+        if (!fx.isFinite()) {
+            x += step
+            fx = f(x)
+        }
+        if (abs(fx) < 1e-12) return x to x
+        var i = 0
+        while (i < steps) {
+            val nx = x + step
+            val fnx = f(nx)
+            if (!fnx.isFinite()) {
+                // Step over singularities without ending the scan.
+                x = nx
+                fx = fnx
+                i++
+                continue
+            }
+            if (abs(fnx) < 1e-12) return nx to nx
+            if (fx.isFinite() && fx * fnx < 0) return x to nx
+            x = nx
+            fx = fnx
+            i++
+        }
+        return null
+    }
+
+    private fun bisect(f: (Double) -> Double, loIn: Double, hiIn: Double): Double {
+        if (loIn == hiIn) return loIn
+        var lo = loIn
+        var hi = hiIn
         var flo = f(lo)
-        var fhi = f(hi)
-        var grows = 0
-        while (flo.isFinite() && fhi.isFinite() && flo * fhi > 0 && grows < 24) {
-            lo *= 2
-            hi *= 2
-            flo = f(lo)
-            fhi = f(hi)
-            grows++
-        }
-        if (!flo.isFinite() || !fhi.isFinite() || flo * fhi > 0) {
-            throw IllegalArgumentException("No sign change found — no root in range")
-        }
         repeat(200) {
             val mid = (lo + hi) / 2
             val fm = f(mid)
@@ -253,7 +284,6 @@ object NumericCalc {
             if (abs(fm) < 1e-12 || (hi - lo) < 1e-12) return mid
             if (flo * fm <= 0) {
                 hi = mid
-                fhi = fm
             } else {
                 lo = mid
                 flo = fm

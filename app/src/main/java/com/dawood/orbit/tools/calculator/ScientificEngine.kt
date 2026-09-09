@@ -56,13 +56,17 @@ object ScientificEngine {
         val variables: Map<String, Double> = emptyMap(),
     )
 
+    private val ThousandsSeparator = "(?<=\\d),(?=\\d{3}\\b)".toRegex()
+
     fun evaluate(expression: String, context: Context = Context()): Result {
         val normalised = expression
             .replace('×', '*')
             .replace('÷', '/')
             .replace('−', '-')
             .replace("π", "pi")
-            .replace(",", "")
+            // Strip thousands separators ("1,000") but keep the commas that
+            // separate function arguments ("gcd(54,24)").
+            .replace(ThousandsSeparator, "")
             .trim()
         if (normalised.isEmpty()) return Result.Failure("Nothing to calculate")
         return try {
