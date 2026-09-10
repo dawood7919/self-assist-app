@@ -4,8 +4,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -13,21 +15,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import com.dawood.orbit.core.designsystem.component.OrbitButton
-import com.dawood.orbit.core.designsystem.component.OrbitButtonSize
-import com.dawood.orbit.core.designsystem.component.OrbitButtonVariant
-import com.dawood.orbit.core.designsystem.component.OrbitCard
-import com.dawood.orbit.core.designsystem.component.OrbitIcon
-import com.dawood.orbit.core.designsystem.component.OrbitTabs
-import com.dawood.orbit.core.designsystem.component.OrbitText
-import com.dawood.orbit.core.designsystem.component.OrbitTextField
-import com.dawood.orbit.core.designsystem.icon.OrbitIcons
-import com.dawood.orbit.core.designsystem.theme.OrbitTheme
 import com.dawood.orbit.tools.cloudbrowser.AuthMethod
 import com.dawood.orbit.tools.cloudbrowser.CloudBrowserEngine
+import com.dawood.orbit.tools.cloudbrowser.CloudColors
+import com.dawood.orbit.tools.cloudbrowser.CloudField
+import com.dawood.orbit.tools.cloudbrowser.CloudLabel
+import com.dawood.orbit.tools.cloudbrowser.CloudOutlineButton
+import com.dawood.orbit.tools.cloudbrowser.CloudPill
+import com.dawood.orbit.tools.cloudbrowser.CloudPrimaryButton
+import com.dawood.orbit.tools.cloudbrowser.CloudSmall
+import com.dawood.orbit.tools.cloudbrowser.CloudSpacing
 import com.dawood.orbit.tools.cloudbrowser.Protocol
 import com.dawood.orbit.tools.cloudbrowser.SavedServer
 import kotlinx.coroutines.Dispatchers
@@ -37,11 +39,12 @@ import kotlinx.coroutines.withContext
 /**
  * VPS connection form.
  *
- * Owns every field in [rememberSaveable] so rotation never discards input.
- * Validation runs through [CloudBrowserEngine.validateServer] with per-field
- * errors. [onTestConnection] and [onConnect] are supplied by the tool, which
- * calls the blocking [VpsApi] directly — this screen never touches the API.
- * Only the key *path* is kept; key contents are never read or stored.
+ * Exact visual copy of mockup slot 2. Owns every field in [rememberSaveable]
+ * so rotation never discards input. Validation runs through
+ * [CloudBrowserEngine.validateServer] with per-field errors. [onTestConnection]
+ * and [onConnect] are supplied by the tool, which calls the blocking [VpsApi]
+ * directly — this screen never touches the API. Only the key *path* is kept;
+ * key contents are never read or stored.
  */
 @Composable
 fun ConnectScreen(
@@ -65,6 +68,16 @@ fun ConnectScreen(
     var testMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var connectMessage by rememberSaveable { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+
+    LaunchedEffect(initial?.id) {
+        name = initial?.name.orEmpty()
+        host = initial?.host.orEmpty()
+        portText = initial?.port?.toString() ?: "22"
+        username = initial?.username.orEmpty()
+        keyPath = initial?.keyPath.orEmpty()
+        authIndex = AuthMethod.entries.indexOf(initial?.authMethod ?: AuthMethod.SshKey)
+        protocolIndex = Protocol.entries.indexOf(initial?.protocol ?: Protocol.Ssh)
+    }
 
     val auth = AuthMethod.entries.getOrElse(authIndex) { initial?.authMethod ?: AuthMethod.SshKey }
     val protocol = Protocol.entries.getOrElse(protocolIndex) { initial?.protocol ?: Protocol.Ssh }
@@ -100,84 +113,130 @@ fun ConnectScreen(
 
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md),
+        verticalArrangement = Arrangement.spacedBy(CloudColors.CardPadding),
     ) {
-        OrbitText(text = "Connect VPS", style = OrbitTheme.typography.h2)
-        OrbitText(
-            text = "Your phone becomes the remote control; browsing happens on the server.",
-            style = OrbitTheme.typography.bodySmall,
-            color = OrbitTheme.colors.textMuted,
-        )
-
-        OrbitText(text = "Authentication", style = OrbitTheme.typography.label)
-        OrbitTabs(
-            tabs = listOf("SSH key", "Password"),
-            selectedIndex = authIndex.coerceIn(0, 1),
-            onSelect = { authIndex = it },
-        )
-        OrbitText(text = "Protocol", style = OrbitTheme.typography.label)
-        OrbitTabs(
-            tabs = listOf("SSH", "WebSocket", "Secure tunnel"),
-            selectedIndex = protocolIndex.coerceIn(0, 2),
-            onSelect = { protocolIndex = it },
-        )
-
-        OrbitTextField(
+        CloudLabel(text = "Server Name")
+        CloudField(
             value = name,
             onValueChange = { name = it; if (submitted) validate() },
-            label = "Server name",
             placeholder = "My VPS",
             errorText = errors["name"],
         )
-        OrbitTextField(
+
+        CloudLabel(text = "Host/IP")
+        CloudField(
             value = host,
             onValueChange = { host = it; if (submitted) validate() },
-            label = "Host / IP address",
             placeholder = "example.com",
             errorText = errors["host"],
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
         )
+
         Row(
             Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+            horizontalArrangement = Arrangement.spacedBy(CloudSpacing.PadSm),
         ) {
-            OrbitTextField(
-                value = portText,
-                onValueChange = { portText = it.filter(Char::isDigit); if (submitted) validate() },
+            Column(Modifier.weight(1f)) {
+                CloudLabel(text = "Port")
+                CloudField(
+                    value = portText,
+                    onValueChange = { portText = it.filter(Char::isDigit); if (submitted) validate() },
+                    placeholder = "22",
+                    errorText = errors["port"],
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+            }
+            Column(Modifier.weight(2f)) {
+                CloudLabel(text = "Username")
+                CloudField(
+                    value = username,
+                    onValueChange = { username = it; if (submitted) validate() },
+                    placeholder = "root",
+                    errorText = errors["username"],
+                )
+            }
+        }
+
+        CloudLabel(text = "Authentication Method")
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(CloudSpacing.PadSm),
+        ) {
+            CloudPill(
+                text = "SSH Key",
+                selected = auth == AuthMethod.SshKey,
+                onSelect = { authIndex = AuthMethod.entries.indexOf(AuthMethod.SshKey) },
                 modifier = Modifier.weight(1f),
-                label = "Port",
-                placeholder = "22",
-                errorText = errors["port"],
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             )
-            OrbitTextField(
-                value = username,
-                onValueChange = { username = it; if (submitted) validate() },
-                modifier = Modifier.weight(2f),
-                label = "Username",
-                placeholder = "root",
-                errorText = errors["username"],
+            CloudPill(
+                text = "Password",
+                selected = auth == AuthMethod.Password,
+                onSelect = { authIndex = AuthMethod.entries.indexOf(AuthMethod.Password) },
+                modifier = Modifier.weight(1f),
             )
         }
+
         if (auth == AuthMethod.SshKey) {
-            OrbitTextField(
-                value = keyPath,
-                onValueChange = { keyPath = it; if (submitted) validate() },
-                label = "Private key path",
-                placeholder = "/storage/keys/id_ed25519",
-                helperText = "Only the path is stored, never the key itself.",
-                errorText = errors["keyPath"],
-            )
+            CloudLabel(text = "SSH Key Path")
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(CloudSpacing.PadSm),
+            ) {
+                CloudField(
+                    value = keyPath,
+                    onValueChange = { keyPath = it; if (submitted) validate() },
+                    placeholder = "/storage/keys/id_ed25519",
+                    errorText = errors["keyPath"],
+                    modifier = Modifier.weight(1f),
+                )
+                CloudOutlineButton(
+                    text = "📁",
+                    onClick = {
+                        // No file picker on this backend: fill the sample path
+                        // when empty, clear it when one is already set.
+                        keyPath = if (keyPath.isBlank()) "/storage/keys/id_ed25519" else ""
+                        if (submitted) validate()
+                    },
+                    modifier = Modifier.weight(0.6f),
+                )
+            }
+            CloudSmall(text = "Only the path is stored, never the key itself.")
         } else {
-            OrbitTextField(
+            CloudLabel(text = "Password")
+            CloudField(
                 value = password,
                 onValueChange = { password = it; if (submitted) validate() },
-                label = "Password",
                 placeholder = "Server password",
-                helperText = "The password is used once to connect and never stored.",
                 errorText = errors["password"],
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            )
+            CloudSmall(text = "The password is used once to connect and never stored.")
+        }
+
+        CloudLabel(text = "Connection Protocol")
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(CloudSpacing.PadSm),
+        ) {
+            CloudPill(
+                text = "SSH",
+                selected = protocol == Protocol.Ssh,
+                onSelect = { protocolIndex = Protocol.entries.indexOf(Protocol.Ssh) },
+                modifier = Modifier.weight(1f),
+            )
+            CloudPill(
+                text = "WebSocket",
+                selected = protocol == Protocol.WebSocket,
+                onSelect = { protocolIndex = Protocol.entries.indexOf(Protocol.WebSocket) },
+                modifier = Modifier.weight(1f),
+            )
+            CloudPill(
+                text = "Secure Tunnel",
+                selected = protocol == Protocol.SecureTunnel,
+                onSelect = { protocolIndex = Protocol.entries.indexOf(Protocol.SecureTunnel) },
+                modifier = Modifier.weight(1f),
             )
         }
 
@@ -185,20 +244,22 @@ fun ConnectScreen(
             TestResultCard(message = testMessage!!, isDemo = isDemo)
         }
         if (connectMessage != null) {
-            OrbitText(
+            BasicText(
                 text = connectMessage!!,
-                style = OrbitTheme.typography.caption,
-                color = OrbitTheme.colors.error,
+                style = TextStyle(
+                    color = CloudColors.Red,
+                    fontSize = CloudColors.SmallSize,
+                ),
             )
         }
 
-        OrbitButton(
-            text = "Test connection",
+        CloudOutlineButton(
+            text = "Test Connection",
             onClick = {
                 connectMessage = null
                 if (!validate()) {
                     testMessage = null
-                    return@OrbitButton
+                    return@CloudOutlineButton
                 }
                 val snapshot = draft()
                 scope.launch {
@@ -215,45 +276,42 @@ fun ConnectScreen(
                     )
                 }
             },
-            fullWidth = true,
-            variant = OrbitButtonVariant.Secondary,
-            leadingIcon = OrbitIcons.Sync,
         )
-        OrbitButton(
+        CloudPrimaryButton(
             text = "Connect VPS",
             onClick = {
-                if (!validate()) return@OrbitButton
-                // Keep on Main: tool handler updates tool state synchronously;
-                // FakeVpsApi answers instantly, so no blocking concern.
-                onConnect(draft()).fold(
-                    onSuccess = { onConnected() },
-                    onFailure = { connectMessage = it.message ?: "Could not connect" },
-                )
+                if (!validate()) return@CloudPrimaryButton
+                val snapshot = draft()
+                scope.launch {
+                    val result = withContext(Dispatchers.IO) { onConnect(snapshot) }
+                    result.fold(
+                        onSuccess = { onConnected() },
+                        onFailure = { connectMessage = it.message ?: "Could not connect" },
+                    )
+                }
             },
-            fullWidth = true,
-            size = OrbitButtonSize.Large,
-            leadingIcon = OrbitIcons.Link,
         )
     }
 }
 
 @Composable
 private fun TestResultCard(message: String, isDemo: Boolean) {
-    OrbitCard {
-        Row(horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
-            OrbitIcon(
-                icon = OrbitIcons.Success,
-                contentDescription = null,
-                tint = OrbitTheme.colors.success,
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(CloudSpacing.PadSm),
+    ) {
+        BasicText(
+            text = if (message.startsWith("Unreachable")) "✕" else "✓",
+            style = TextStyle(
+                color = if (message.startsWith("Unreachable")) CloudColors.Red else CloudColors.Green,
+                fontSize = CloudColors.BodySize,
+            ),
+        )
+        Column {
+            CloudSmall(
+                text = if (isDemo) "Demo result" else "Server online",
             )
-            Column {
-                OrbitText(text = if (isDemo) "Demo result" else "Server online", style = OrbitTheme.typography.h3)
-                OrbitText(
-                    text = message,
-                    style = OrbitTheme.typography.caption,
-                    color = OrbitTheme.colors.textMuted,
-                )
-            }
+            CloudSmall(text = message)
         }
     }
 }

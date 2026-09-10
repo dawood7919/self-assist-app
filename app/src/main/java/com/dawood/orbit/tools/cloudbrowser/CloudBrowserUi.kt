@@ -1,150 +1,361 @@
 package com.dawood.orbit.tools.cloudbrowser
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import com.dawood.orbit.core.designsystem.component.OrbitBadge
-import com.dawood.orbit.core.designsystem.component.OrbitButton
-import com.dawood.orbit.core.designsystem.component.OrbitButtonSize
-import com.dawood.orbit.core.designsystem.component.OrbitButtonVariant
-import com.dawood.orbit.core.designsystem.component.OrbitCard
-import com.dawood.orbit.core.designsystem.component.OrbitEmptyState
-import com.dawood.orbit.core.designsystem.component.OrbitIcon
-import com.dawood.orbit.core.designsystem.component.OrbitText
-import com.dawood.orbit.core.designsystem.component.OrbitTone
-import com.dawood.orbit.core.designsystem.icon.OrbitIcons
-import com.dawood.orbit.core.designsystem.theme.OrbitTheme
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 
 /**
  * Shared tool-private building blocks for the Cloud Browser screens.
  *
+ * Exact visual copy of the HTML mockup (feature-local override ordered by
+ * the user): fixed mockup tokens from [CloudColors], emoji glyphs as icons.
  * Screens pass values and callbacks down; nothing here talks to [VpsApi].
- * Demo honesty comes from [CloudBrowserEngine.connectionLabel]: demo labels
- * never claim a real protected connection.
+ * Demo honesty comes from [CloudBrowserEngine.connectionLabel] plus the
+ * state-driven badge below: only a real (non-demo) connection ever shows
+ * the green "VPS Connected" badge, so demo numbers are never presented as
+ * a real protected connection.
  */
 
-/** Connection summary with Connect and Launch actions. */
+// ------------------------------------------------------------------
+// Honesty helper
+// ------------------------------------------------------------------
+
+/** Green only for a real connection; demo states always read Demo-honest. */
+internal fun honestConnected(connectionState: ConnectionState, isDemo: Boolean): Boolean =
+    connectionState == ConnectionState.Connected && !isDemo
+
+// ------------------------------------------------------------------
+// Type helpers (mockup scale: label dim 11sp, body 14sp, small 12sp dim,
+// title 16sp bold, badge 10sp).
+// ------------------------------------------------------------------
+
 @Composable
-internal fun StatusCard(
-    connectionState: ConnectionState,
-    latencyMs: Long?,
-    isDemo: Boolean,
-    serverName: String?,
-    onConnect: () -> Unit,
-    onLaunch: () -> Unit,
+internal fun CloudTitle(
+    text: String,
+    modifier: Modifier = Modifier,
+    align: TextAlign? = null,
+) {
+    BasicText(
+        text = text,
+        modifier = modifier,
+        style = TextStyle(
+            color = CloudColors.Text,
+            fontSize = CloudColors.TitleSize,
+            fontWeight = FontWeight.Bold,
+        ).withAlign(align),
+    )
+}
+
+@Composable
+internal fun CloudBody(
+    text: String,
+    modifier: Modifier = Modifier,
+    bold: Boolean = false,
+    align: TextAlign? = null,
+) {
+    BasicText(
+        text = text,
+        modifier = modifier,
+        style = TextStyle(
+            color = CloudColors.Text,
+            fontSize = CloudColors.BodySize,
+            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+        ).withAlign(align),
+    )
+}
+
+@Composable
+internal fun CloudSmall(
+    text: String,
+    modifier: Modifier = Modifier,
+    align: TextAlign? = null,
+) {
+    BasicText(
+        text = text,
+        modifier = modifier,
+        style = TextStyle(
+            color = CloudColors.Dim,
+            fontSize = CloudColors.SmallSize,
+        ).withAlign(align),
+    )
+}
+
+@Composable
+internal fun CloudLabel(
+    text: String,
     modifier: Modifier = Modifier,
 ) {
-    val connected = connectionState == ConnectionState.Connected
-    OrbitCard(modifier = modifier) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
-        ) {
-            OrbitIcon(
-                icon = if (connected) OrbitIcons.Success else OrbitIcons.Warning,
-                contentDescription = null,
-                tint = if (connected) OrbitTheme.colors.success else OrbitTheme.colors.warning,
+    BasicText(
+        text = text,
+        modifier = modifier,
+        style = TextStyle(
+            color = CloudColors.Dim,
+            fontSize = CloudColors.LabelSize,
+        ),
+    )
+}
+
+private fun TextStyle.withAlign(align: TextAlign?): TextStyle =
+    if (align != null) copy(textAlign = align) else this
+
+// ------------------------------------------------------------------
+// Surfaces and buttons
+// ------------------------------------------------------------------
+
+/** Mockup card: panel bg + 1dp border (line, or blue for hero) + 12dp + 10dp. */
+@Composable
+internal fun CloudCard(
+    modifier: Modifier = Modifier,
+    blueBorder: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(CloudColors.CardRadius))
+            .background(CloudColors.Panel)
+            .border(
+                width = CloudSpacing.BorderWidth,
+                color = if (blueBorder) CloudColors.Blue else CloudColors.Line,
+                shape = RoundedCornerShape(CloudColors.CardRadius),
             )
-            Column(Modifier.weight(1f)) {
-                OrbitText(
-                    text = serverName ?: "No server yet",
-                    style = OrbitTheme.typography.h3,
+            .padding(CloudColors.CardPadding),
+        verticalArrangement = Arrangement.spacedBy(CloudSpacing.PadSm),
+        content = content,
+    )
+}
+
+/** Mockup primary button: blue bg, white text, 10dp radius, bold. */
+@Composable
+internal fun CloudPrimaryButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(CloudColors.ButtonRadius))
+            .background(CloudColors.Blue)
+            .clickable(onClickLabel = text, role = Role.Button, onClick = onClick)
+            .padding(vertical = CloudSpacing.PadMd, horizontal = CloudColors.CardPadding),
+        contentAlignment = Alignment.Center,
+    ) {
+        BasicText(
+            text = text,
+            style = TextStyle(
+                color = CloudColors.White,
+                fontSize = CloudColors.BodySize,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+            ),
+        )
+    }
+}
+
+/** Mockup outline button: panel2 bg + line border + text color. */
+@Composable
+internal fun CloudOutlineButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(CloudColors.ButtonRadius))
+            .background(CloudColors.Panel2)
+            .border(
+                width = CloudSpacing.BorderWidth,
+                color = CloudColors.Line,
+                shape = RoundedCornerShape(CloudColors.ButtonRadius),
+            )
+            .clickable(onClickLabel = text, role = Role.Button, onClick = onClick)
+            .padding(vertical = CloudColors.CardPadding, horizontal = CloudSpacing.PadSm),
+        contentAlignment = Alignment.Center,
+    ) {
+        BasicText(
+            text = text,
+            style = TextStyle(
+                color = CloudColors.Text,
+                fontSize = CloudColors.BodySize,
+                textAlign = TextAlign.Center,
+            ),
+        )
+    }
+}
+
+/**
+ * Mockup badge: 6dp radius; green = 15% green bg + green text, amber
+ * likewise; 10sp.
+ */
+@Composable
+internal fun CloudBadge(
+    text: String,
+    green: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val color = if (green) CloudColors.Green else CloudColors.Amber
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(CloudColors.BadgeRadius))
+            .background(color.copy(alpha = 0.15f))
+            .padding(horizontal = CloudSpacing.PadSm, vertical = CloudSpacing.PadXs),
+    ) {
+        BasicText(
+            text = text,
+            style = TextStyle(
+                color = color,
+                fontSize = CloudColors.BadgeSize,
+            ),
+        )
+    }
+}
+
+/** State-driven honesty badge: green only when really connected. */
+@Composable
+internal fun CloudStateBadge(
+    connectionState: ConnectionState,
+    isDemo: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val connected = honestConnected(connectionState, isDemo)
+    CloudBadge(
+        text = if (connected) "● VPS Connected" else "○ Demo — Not Connected",
+        green = connected,
+        modifier = modifier,
+    )
+}
+
+/**
+ * Mockup pill: panel2 + line border + 8dp radius, dim text; active pill:
+ * blueDim bg + blue border + #DBE6FF text.
+ */
+@Composable
+internal fun CloudPill(
+    text: String,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(CloudColors.PillRadius))
+            .background(if (selected) CloudColors.BlueDim else CloudColors.Panel2)
+            .border(
+                width = CloudSpacing.BorderWidth,
+                color = if (selected) CloudColors.Blue else CloudColors.Line,
+                shape = RoundedCornerShape(CloudColors.PillRadius),
+            )
+            .clickable(onClickLabel = text, role = Role.Button, onClick = onSelect)
+            .padding(vertical = CloudSpacing.PadSm, horizontal = CloudColors.CardPadding),
+        contentAlignment = Alignment.Center,
+    ) {
+        BasicText(
+            text = text,
+            style = TextStyle(
+                color = if (selected) CloudColors.OnBlue else CloudColors.Dim,
+                fontSize = CloudColors.SmallSize,
+                textAlign = TextAlign.Center,
+            ),
+        )
+    }
+}
+
+/** Mockup card-styled text field with an optional error line underneath. */
+@Composable
+internal fun CloudField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+    singleLine: Boolean = true,
+    errorText: String? = null,
+) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(CloudSpacing.PadXs)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(CloudColors.CardRadius))
+                .background(CloudColors.Panel)
+                .border(
+                    width = CloudSpacing.BorderWidth,
+                    color = if (errorText != null) CloudColors.Red else CloudColors.Line,
+                    shape = RoundedCornerShape(CloudColors.CardRadius),
                 )
-                OrbitText(
-                    text = CloudBrowserEngine.connectionLabel(connectionState, latencyMs, isDemo),
-                    style = OrbitTheme.typography.caption,
-                    color = OrbitTheme.colors.textMuted,
-                )
-            }
-            OrbitBadge(
-                text = if (isDemo) "Demo" else "Live",
-                tone = if (isDemo) OrbitTone.Warning else OrbitTone.Success,
-                showDot = true,
+                .padding(CloudColors.CardPadding),
+        ) {
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier.fillMaxWidth(),
+                textStyle = TextStyle(
+                    color = CloudColors.Text,
+                    fontSize = CloudColors.BodySize,
+                ),
+                singleLine = singleLine,
+                keyboardOptions = keyboardOptions,
+                visualTransformation = visualTransformation,
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(CloudColors.Blue),
+                decorationBox = { inner ->
+                    if (value.isEmpty()) {
+                        BasicText(
+                            text = placeholder,
+                            style = TextStyle(
+                                color = CloudColors.Faint,
+                                fontSize = CloudColors.BodySize,
+                            ),
+                        )
+                    }
+                    inner()
+                },
             )
         }
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
-        ) {
-            OrbitButton(
-                text = if (connected) "Server setup" else "Connect",
-                onClick = onConnect,
-                modifier = Modifier.weight(1f),
-                variant = OrbitButtonVariant.Secondary,
-                size = OrbitButtonSize.Small,
-                leadingIcon = OrbitIcons.Link,
-            )
-            OrbitButton(
-                text = "Launch Browser",
-                onClick = onLaunch,
-                modifier = Modifier.weight(1f),
-                size = OrbitButtonSize.Small,
-                leadingIcon = OrbitIcons.OpenExternal,
+        if (errorText != null) {
+            BasicText(
+                text = errorText,
+                style = TextStyle(
+                    color = CloudColors.Red,
+                    fontSize = CloudColors.SmallSize,
+                ),
             )
         }
     }
 }
 
-/** Phone to secure relay to VPS to internet, using icons only, no emoji. */
+// ------------------------------------------------------------------
+// Existing shared blocks (signatures unchanged, internals restyled).
+// ------------------------------------------------------------------
+
+/** Phone to demo relay to VPS to internet, as one centered mockup flow row. */
 @Composable
 internal fun FlowDiagram(modifier: Modifier = Modifier) {
-    OrbitCard(modifier = modifier, color = OrbitTheme.colors.surfaceElevated) {
-        OrbitText(text = "How it works", style = OrbitTheme.typography.h3)
-        OrbitText(
-            text = "Your phone is the remote control; the VPS does the browsing.",
-            style = OrbitTheme.typography.caption,
-            color = OrbitTheme.colors.textMuted,
-        )
-        FlowNode(icon = OrbitIcons.Person, label = "This phone", detail = "Touch and keyboard input")
-        FlowLink(label = "Control channel")
-        FlowNode(icon = OrbitIcons.Storage, label = "Your VPS", detail = "Runs the remote browser")
-        FlowLink(label = "VPS public address")
-        FlowNode(icon = OrbitIcons.Link, label = "Internet", detail = "Sites see the VPS, not the phone")
-    }
-}
-
-@Composable
-private fun FlowNode(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    detail: String,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
-    ) {
-        OrbitIcon(icon, contentDescription = null, tint = OrbitTheme.colors.accent)
-        Column {
-            OrbitText(text = label, style = OrbitTheme.typography.label)
-            OrbitText(
-                text = detail,
-                style = OrbitTheme.typography.caption,
-                color = OrbitTheme.colors.textMuted,
-            )
-        }
-    }
-}
-
-@Composable
-private fun FlowLink(label: String) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xs),
-    ) {
-        OrbitIcon(
-            icon = OrbitIcons.CaretDown,
-            contentDescription = null,
-            size = OrbitTheme.sizes.iconSm,
-            tint = OrbitTheme.colors.textMuted,
-        )
-        OrbitText(
-            text = label,
-            style = OrbitTheme.typography.caption,
-            color = OrbitTheme.colors.textMuted,
+    CloudCard(modifier = modifier) {
+        CloudSmall(
+            text = "📱 Phone → 🔒 Secure → 🖥 VPS → 🌐 Internet",
+            modifier = Modifier.fillMaxWidth(),
+            align = TextAlign.Center,
         )
     }
 }
@@ -158,12 +369,9 @@ internal fun EmptyState(
     onAction: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    OrbitEmptyState(
-        title = title,
-        description = subtitle,
-        modifier = modifier,
-        icon = OrbitIcons.CloudUpload,
-        primaryActionLabel = actionLabel,
-        onPrimaryAction = onAction,
-    )
+    CloudCard(modifier = modifier) {
+        CloudTitle(text = title)
+        CloudSmall(text = subtitle)
+        CloudPrimaryButton(text = actionLabel, onClick = onAction)
+    }
 }

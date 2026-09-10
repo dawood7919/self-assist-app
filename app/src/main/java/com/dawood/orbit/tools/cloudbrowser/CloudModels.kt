@@ -202,6 +202,7 @@ data class CloudSettings(
     val keepRunning: Boolean = false,
     val dataSaver: Boolean = false,
     val screenshotCacheBytes: Long = 32L * 1024L * 1024L,
+    val introSeen: Boolean = false,
 )
 
 /** Live tuning of one remote stream (browser controls sheet). */

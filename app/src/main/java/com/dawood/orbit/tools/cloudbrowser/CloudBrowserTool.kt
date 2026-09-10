@@ -1,11 +1,17 @@
 package com.dawood.orbit.tools.cloudbrowser
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -16,10 +22,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.dawood.orbit.core.designsystem.component.OrbitBadge
 import com.dawood.orbit.core.designsystem.component.OrbitButton
 import com.dawood.orbit.core.designsystem.component.OrbitButtonSize
 import com.dawood.orbit.core.designsystem.component.OrbitButtonVariant
@@ -27,10 +37,7 @@ import com.dawood.orbit.core.designsystem.component.OrbitIconButton
 import com.dawood.orbit.core.designsystem.component.OrbitMenuItem
 import com.dawood.orbit.core.designsystem.component.OrbitModal
 import com.dawood.orbit.core.designsystem.component.OrbitTextField
-import com.dawood.orbit.core.designsystem.component.OrbitTone
 import com.dawood.orbit.core.designsystem.icon.OrbitIcons
-import com.dawood.orbit.core.designsystem.theme.OrbitTheme
-import com.dawood.orbit.core.layout.LocalOrbitWindow
 import com.dawood.orbit.core.layout.OrbitContentContainer
 import com.dawood.orbit.tools.cloudbrowser.CloudBrowserEngine.SessionAction
 import com.dawood.orbit.tools.cloudbrowser.screens.ActiveSessionScreen
@@ -40,6 +47,7 @@ import com.dawood.orbit.tools.cloudbrowser.screens.DownloadsScreen
 import com.dawood.orbit.tools.cloudbrowser.screens.FilesScreen
 import com.dawood.orbit.tools.cloudbrowser.screens.HomeScreen
 import com.dawood.orbit.tools.cloudbrowser.screens.InputOverlayScreen
+import com.dawood.orbit.tools.cloudbrowser.screens.IntroScreen
 import com.dawood.orbit.tools.cloudbrowser.screens.MonitorScreen
 import com.dawood.orbit.tools.cloudbrowser.screens.NewSessionScreen
 import com.dawood.orbit.tools.cloudbrowser.screens.SessionsScreen
@@ -61,6 +69,11 @@ private sealed interface FileDialog {
 /**
  * Cloud Browser entry: owns all tool state and the blocking [VpsApi] calls.
  *
+ * Exact visual copy of the HTML mockup for the tool chrome (feature-local
+ * override ordered by the user): dark-only mockup tokens, emoji tab bar that
+ * is visible only on the Home route, first-run intro until `introSeen` is
+ * persisted. The ToolShell top bar stays as required chrome.
+ *
  * Demo backend: [FakeVpsApi] answers instantly with canned data — replace it
  * with a real [VpsApi] implementation to go live. While the fake is in use
  * [isDemo] stays true and every screen shows the honest demo banner.
@@ -69,7 +82,6 @@ private sealed interface FileDialog {
 @Composable
 fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val window = LocalOrbitWindow.current
     // Replace FakeVpsApi() with a real VpsApi implementation to go live.
     val api = remember { FakeVpsApi() }
     val isDemo = true
@@ -209,17 +221,10 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
         fileDialog = dialog
     }
 
-    val tabs: (@Composable RowScope.() -> Unit)? =
-        if (window.isCompact) {
-            {
-                CloudTab("Home", route == CloudRoute.Home, { go(CloudRoute.Home) }, Modifier.weight(1f))
-                CloudTab("Sessions", route == CloudRoute.Sessions, { go(CloudRoute.Sessions) }, Modifier.weight(1f))
-                CloudTab("Files", route == CloudRoute.Files, { go(CloudRoute.Files) }, Modifier.weight(1f))
-                CloudTab("Settings", route == CloudRoute.Settings, { go(CloudRoute.Settings) }, Modifier.weight(1f))
-            }
-        } else {
-            null
-        }
+    // Mockup bottom nav: visible only on the Home route (never on stack
+    // routes, never over the intro). Rendered inside the content so it gets
+    // the exact mockup styling (bg + top line border).
+    val showTabs = settings.introSeen && route == CloudRoute.Home
 
     ToolShell(
         tool = tool,
@@ -257,244 +262,263 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
                 icon = OrbitIcons.Close,
             )
         },
-        bottomBar = tabs,
     ) {
         Column(
             Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(OrbitTheme.spacing.lg),
+                .background(CloudColors.Bg),
         ) {
-            OrbitContentContainer {
-                Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.md)) {
-                    if (isDemo) {
-                        OrbitBadge(
-                            text = "Demo — not connected",
-                            tone = OrbitTone.Warning,
-                            icon = OrbitIcons.Warning,
-                        )
-                    }
-                    when (route) {
-                        CloudRoute.Home -> HomeScreen(
-                            server = server,
-                            connectionState = connectionState,
-                            latencyMs = latencyMs,
-                            isDemo = isDemo,
-                            activeSessionCount = sessions.count { it.state == SessionState.Active },
-                            onLaunchBrowser = {
-                                if (connectionState == ConnectionState.Connected && server != null) {
-                                    push(CloudRoute.BrowserView)
-                                } else {
-                                    push(CloudRoute.Connect)
-                                }
-                            },
-                            onManageServer = { push(CloudRoute.Connect) },
-                            onOpenSessions = { go(CloudRoute.Sessions) },
-                            onOpenMonitor = { push(CloudRoute.Monitor) },
-                            onOpenFiles = { go(CloudRoute.Files) },
-                        )
-                        CloudRoute.Connect -> ConnectScreen(
-                            initial = server,
-                            isDemo = isDemo,
-                            onTestConnection = { api.testConnection(it) },
-                            onConnect = { draft ->
-                                val withId = if (draft.id.isBlank()) {
-                                    draft.copy(id = UUID.randomUUID().toString())
-                                } else {
-                                    draft
-                                }
-                                // Called on Dispatchers.IO by ConnectScreen; keep blocking here.
-                                api.connect(withId).onSuccess {
-                                    val latency = api.testConnection(withId).getOrNull()
-                                    latencyMs = latency
-                                    serverStore.upsert(withId.copy(lastLatencyMs = latency))
-                                    connectionState = ConnectionState.Connected
-                                    refreshSessions()
-                                    refreshMetrics()
-                                }
-                            },
-                            onConnected = { go(CloudRoute.Home) },
-                        )
-                        CloudRoute.BrowserView -> BrowserViewScreen(
-                            serverName = server?.name,
-                            connectionState = connectionState,
-                            latencyMs = latencyMs,
-                            isDemo = isDemo,
-                            config = streamConfig,
-                            onConfigChange = { streamConfig = it },
-                            onOpenInputOverlay = { push(CloudRoute.InputOverlay) },
-                        )
-                        CloudRoute.ActiveSession -> {
-                            val session = sessions.firstOrNull { it.id == activeSessionId }
-                            if (session == null) {
-                                EmptyState(
-                                    title = "Session ended",
-                                    subtitle = "Pick another session to keep browsing.",
-                                    actionLabel = "Back to sessions",
-                                    onAction = { go(CloudRoute.Sessions) },
-                                )
-                            } else {
-                                ActiveSessionScreen(
-                                    session = session,
-                                    serverName = server?.name ?: "Demo server",
-                                    isDemo = isDemo,
-                                    onPollDetails = { api.pollSessionDetails(it) },
-                                    onCloseSession = {
-                                        api.closeSession(it).also { refreshSessions() }
-                                    },
-                                    onRestartSession = {
-                                        api.restartSession(it).also { refreshSessions() }
-                                    },
-                                    onOpenFullscreen = { push(CloudRoute.BrowserView) },
-                                    onSessionEnded = { go(CloudRoute.Sessions) },
+            Column(
+                Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = CloudColors.BodyPaddingH, vertical = CloudSpacing.PadMd),
+            ) {
+                OrbitContentContainer {
+                    Column(verticalArrangement = Arrangement.spacedBy(CloudSpacing.PadMd)) {
+                        if (!settings.introSeen) {
+                            IntroScreen(
+                                onStart = {
+                                    settingsStore.save(settings.copy(introSeen = true))
+                                    go(CloudRoute.Home)
+                                },
+                            )
+                        } else {
+                            if (isDemo) {
+                                CloudBadge(
+                                    text = "○ Demo — Not connected",
+                                    green = false,
                                 )
                             }
-                        }
-                        CloudRoute.Sessions -> SessionsScreen(
-                            sessions = sessions,
-                            serverNameOf = { id ->
-                                servers.firstOrNull { it.id == id }?.name
-                                    ?: server?.name
-                                    ?: "Demo server"
-                            },
-                            durationTextOf = { session ->
-                                CloudBrowserEngine.sessionAgeText(
-                                    session.startedAtEpochMs,
-                                    System.currentTimeMillis(),
-                                )
-                            },
-                            onAction = { id, action -> onSessionAction(id, action) },
-                            onNew = { push(CloudRoute.NewSession) },
-                        )
-                        CloudRoute.Monitor -> {
-                            if (server == null) {
-                                EmptyState(
-                                    title = "No server connected",
-                                    subtitle = "Connect a VPS to see live health metrics.",
-                                    actionLabel = "Connection setup",
-                                    onAction = { push(CloudRoute.Connect) },
-                                )
-                            } else {
-                                MonitorScreen(
-                                    metrics = metrics,
+                            when (route) {
+                                CloudRoute.Home -> HomeScreen(
+                                    server = server,
+                                    connectionState = connectionState,
+                                    latencyMs = latencyMs,
                                     isDemo = isDemo,
-                                    onRefresh = { refreshMetrics() },
+                                    activeSessionCount = sessions.count { it.state == SessionState.Active },
+                                    onLaunchBrowser = {
+                                        if (connectionState == ConnectionState.Connected && server != null) {
+                                            push(CloudRoute.BrowserView)
+                                        } else {
+                                            push(CloudRoute.Connect)
+                                        }
+                                    },
+                                    onManageServer = { push(CloudRoute.Connect) },
+                                    onOpenSessions = { go(CloudRoute.Sessions) },
+                                    onOpenMonitor = { push(CloudRoute.Monitor) },
+                                    onOpenFiles = { go(CloudRoute.Files) },
                                 )
-                            }
-                        }
-                        CloudRoute.Files -> FilesScreen(
-                            path = currentPath,
-                            files = files,
-                            onNavigate = {
-                                currentPath = it
-                                refreshFiles()
-                            },
-                            onUpload = {
-                                openFileDialog(
-                                    FileDialog.Notice(
-                                        title = "Upload unavailable",
-                                        message = "This backend has no upload endpoint, so files " +
-                                            "can only move within the VPS for now.",
-                                    ),
+                                CloudRoute.Connect -> ConnectScreen(
+                                    initial = server,
+                                    isDemo = isDemo,
+                                    onTestConnection = { api.testConnection(it) },
+                                    onConnect = { draft ->
+                                        val withId = if (draft.id.isBlank()) {
+                                            draft.copy(id = UUID.randomUUID().toString())
+                                        } else {
+                                            draft
+                                        }
+                                        // Runs on Dispatchers.IO via ConnectScreen; blocking calls are safe here.
+                                        api.connect(withId).onSuccess {
+                                            val latency = api.testConnection(withId).getOrNull()
+                                            latencyMs = latency
+                                            serverStore.upsert(withId.copy(lastLatencyMs = latency))
+                                            connectionState = ConnectionState.Connected
+                                            refreshSessions()
+                                            refreshMetrics()
+                                        }
+                                    },
+                                    onConnected = { go(CloudRoute.Home) },
                                 )
-                            },
-                            onDownload = { path ->
-                                val queued = downloads.firstOrNull { it.sourcePath == path }
-                                if (queued != null && queued.state != DownloadState.Completed) {
-                                    val id = queued.id
-                                    scope.launch {
-                                        withContext(Dispatchers.IO) { api.downloadToPhone(id) }
-                                        refreshDownloads()
-                                        go(CloudRoute.Downloads)
-                                    }
-                                } else {
-                                    openFileDialog(
-                                        FileDialog.Notice(
-                                            title = "Download unavailable",
-                                            message = "Direct file download is not supported by this " +
-                                                "backend yet. Queued transfers live in Downloads.",
-                                        ),
-                                    )
-                                }
-                            },
-                            onRename = { path ->
-                                openFileDialog(FileDialog.Rename(path), path.substringAfterLast('/'))
-                            },
-                            onMove = { openFileDialog(FileDialog.Move(it), currentPath) },
-                            onDelete = { path ->
-                                scope.launch {
-                                    withContext(Dispatchers.IO) { api.deleteFile(path) }
-                                    refreshFiles()
-                                }
-                            },
-                        )
-                        CloudRoute.Settings -> SettingsScreen(
-                            settings = settings,
-                            cacheText = CloudBrowserEngine.formatBytes(settings.screenshotCacheBytes),
-                            isDemo = isDemo,
-                            onUpdate = { settingsStore.save(it) },
-                            onClearCache = { settingsStore.save(settings.copy(screenshotCacheBytes = 0L)) },
-                        )
-                        CloudRoute.NewSession -> NewSessionScreen(
-                            servers = servers,
-                            defaults = settings,
-                            onLaunch = { serverId, browser, profile, resolution, quality, frameRate, timeoutSecs ->
-                                scope.launch {
-                                    val result = withContext(Dispatchers.IO) {
-                                        api.launchSession(
-                                            serverId = serverId,
-                                            browser = browser,
-                                            profile = profile,
-                                            resolution = resolution,
-                                            quality = quality,
-                                            frameRate = frameRate,
-                                            timeoutSecs = timeoutSecs,
+                                CloudRoute.BrowserView -> BrowserViewScreen(
+                                    serverName = server?.name,
+                                    connectionState = connectionState,
+                                    latencyMs = latencyMs,
+                                    isDemo = isDemo,
+                                    config = streamConfig,
+                                    onConfigChange = { streamConfig = it },
+                                    onOpenInputOverlay = { push(CloudRoute.InputOverlay) },
+                                )
+                                CloudRoute.ActiveSession -> {
+                                    val session = sessions.firstOrNull { it.id == activeSessionId }
+                                    if (session == null) {
+                                        EmptyState(
+                                            title = "Session ended",
+                                            subtitle = "Pick another session to keep browsing.",
+                                            actionLabel = "Back to sessions",
+                                            onAction = { go(CloudRoute.Sessions) },
+                                        )
+                                    } else {
+                                        ActiveSessionScreen(
+                                            session = session,
+                                            serverName = server?.name ?: "Demo server",
+                                            isDemo = isDemo,
+                                            onPollDetails = { api.pollSessionDetails(it) },
+                                            onCloseSession = {
+                                                api.closeSession(it).also { refreshSessions() }
+                                            },
+                                            onRestartSession = {
+                                                api.restartSession(it).also { refreshSessions() }
+                                            },
+                                            onOpenFullscreen = { push(CloudRoute.BrowserView) },
+                                            onSessionEnded = { go(CloudRoute.Sessions) },
                                         )
                                     }
-                                    result.onSuccess {
-                                        activeSessionId = it.id
-                                        refreshSessions()
-                                        push(CloudRoute.ActiveSession)
+                                }
+                                CloudRoute.Sessions -> SessionsScreen(
+                                    sessions = sessions,
+                                    serverNameOf = { id ->
+                                        servers.firstOrNull { it.id == id }?.name
+                                            ?: server?.name
+                                            ?: "Demo server"
+                                    },
+                                    durationTextOf = { session ->
+                                        CloudBrowserEngine.sessionAgeText(
+                                            session.startedAtEpochMs,
+                                            System.currentTimeMillis(),
+                                        )
+                                    },
+                                    onAction = { id, action -> onSessionAction(id, action) },
+                                    onNew = { push(CloudRoute.NewSession) },
+                                )
+                                CloudRoute.Monitor -> {
+                                    if (server == null) {
+                                        EmptyState(
+                                            title = "No server connected",
+                                            subtitle = "Connect a VPS to see live health metrics.",
+                                            actionLabel = "Connection setup",
+                                            onAction = { push(CloudRoute.Connect) },
+                                        )
+                                    } else {
+                                        MonitorScreen(
+                                            metrics = metrics,
+                                            isDemo = isDemo,
+                                            onRefresh = { refreshMetrics() },
+                                        )
                                     }
                                 }
-                            },
-                            onCancel = { goBack() },
-                        )
-                        CloudRoute.InputOverlay -> InputOverlayScreen(
-                            mode = streamConfig.mode,
-                            onMode = { streamConfig = streamConfig.copy(mode = it) },
-                            onKey = { key ->
-                                demoNotice = "Sent $key — demo backend, not delivered"
-                            },
-                            onTouchDrag = { _, _ ->
-                                if (demoNotice?.startsWith("Touchpad") != true) {
-                                    demoNotice = "Touchpad input — demo backend, not delivered"
-                                }
-                            },
-                            onToolbar = { action ->
-                                when (action) {
-                                    "Refresh" -> refreshCurrent()
-                                    "Zoom" -> push(CloudRoute.BrowserView)
-                                    else -> demoNotice = "$action is not available in this demo"
-                                }
-                            },
-                        )
-                        CloudRoute.Downloads -> DownloadsScreen(
-                            items = downloads,
-                            filter = DownloadFilter.entries.getOrElse(downloadFilterIndex) { DownloadFilter.All },
-                            onFilter = {
-                                downloadFilterIndex = DownloadFilter.entries.indexOf(it).coerceIn(DownloadFilter.entries.indices)
-                            },
-                            onDownloadToPhone = {
-                                val id = it
-                                scope.launch {
-                                    withContext(Dispatchers.IO) { api.downloadToPhone(id) }
-                                    refreshDownloads()
-                                }
-                            },
-                        )
+                                CloudRoute.Files -> FilesScreen(
+                                    path = currentPath,
+                                    files = files,
+                                    onNavigate = {
+                                        currentPath = it
+                                        refreshFiles()
+                                    },
+                                    onUpload = {
+                                        openFileDialog(
+                                            FileDialog.Notice(
+                                                title = "Upload unavailable",
+                                                message = "This backend has no upload endpoint, so files " +
+                                                    "can only move within the VPS for now.",
+                                            ),
+                                        )
+                                    },
+                                    onDownload = { path ->
+                                        val queued = downloads.firstOrNull { it.sourcePath == path }
+                                        if (queued != null && queued.state != DownloadState.Completed) {
+                                            val id = queued.id
+                                            scope.launch {
+                                                withContext(Dispatchers.IO) { api.downloadToPhone(id) }
+                                                refreshDownloads()
+                                                go(CloudRoute.Downloads)
+                                            }
+                                        } else {
+                                            openFileDialog(
+                                                FileDialog.Notice(
+                                                    title = "Download unavailable",
+                                                    message = "Direct file download is not supported by this " +
+                                                        "backend yet. Queued transfers live in Downloads.",
+                                                ),
+                                            )
+                                        }
+                                    },
+                                    onRename = { path ->
+                                        openFileDialog(FileDialog.Rename(path), path.substringAfterLast('/'))
+                                    },
+                                    onMove = { openFileDialog(FileDialog.Move(it), currentPath) },
+                                    onDelete = { path ->
+                                        scope.launch {
+                                            withContext(Dispatchers.IO) { api.deleteFile(path) }
+                                            refreshFiles()
+                                        }
+                                    },
+                                )
+                                CloudRoute.Settings -> SettingsScreen(
+                                    settings = settings,
+                                    cacheText = CloudBrowserEngine.formatBytes(settings.screenshotCacheBytes),
+                                    isDemo = isDemo,
+                                    onUpdate = { settingsStore.save(it) },
+                                    onClearCache = { settingsStore.save(settings.copy(screenshotCacheBytes = 0L)) },
+                                )
+                                CloudRoute.NewSession -> NewSessionScreen(
+                                    servers = servers,
+                                    defaults = settings,
+                                    onLaunch = { serverId, browser, profile, resolution, quality, frameRate, timeoutSecs ->
+                                        scope.launch {
+                                            val result = withContext(Dispatchers.IO) {
+                                                api.launchSession(
+                                                    serverId = serverId,
+                                                    browser = browser,
+                                                    profile = profile,
+                                                    resolution = resolution,
+                                                    quality = quality,
+                                                    frameRate = frameRate,
+                                                    timeoutSecs = timeoutSecs,
+                                                )
+                                            }
+                                            result.onSuccess {
+                                                activeSessionId = it.id
+                                                refreshSessions()
+                                                push(CloudRoute.ActiveSession)
+                                            }
+                                        }
+                                    },
+                                    onCancel = { goBack() },
+                                )
+                                CloudRoute.InputOverlay -> InputOverlayScreen(
+                                    mode = streamConfig.mode,
+                                    onMode = { streamConfig = streamConfig.copy(mode = it) },
+                                    onKey = { key ->
+                                        demoNotice = "Sent $key — demo backend, not delivered"
+                                    },
+                                    onTouchDrag = { _, _ ->
+                                        if (demoNotice?.startsWith("Touchpad") != true) {
+                                            demoNotice = "Touchpad input — demo backend, not delivered"
+                                        }
+                                    },
+                                    onToolbar = { action ->
+                                        when (action) {
+                                            "Refresh" -> refreshCurrent()
+                                            "Zoom" -> push(CloudRoute.BrowserView)
+                                            else -> demoNotice = "$action is not available in this demo"
+                                        }
+                                    },
+                                )
+                                CloudRoute.Downloads -> DownloadsScreen(
+                                    items = downloads,
+                                    filter = DownloadFilter.entries.getOrElse(downloadFilterIndex) { DownloadFilter.All },
+                                    onFilter = {
+                                        downloadFilterIndex = DownloadFilter.entries.indexOf(it).coerceIn(DownloadFilter.entries.indices)
+                                    },
+                                    onDownloadToPhone = {
+                                        val id = it
+                                        scope.launch {
+                                            withContext(Dispatchers.IO) { api.downloadToPhone(id) }
+                                            refreshDownloads()
+                                        }
+                                    },
+                                )
+                            }
+                        }
                     }
                 }
+            }
+            if (showTabs) {
+                CloudBottomNav(
+                    active = route,
+                    onSelect = { go(it) },
+                )
             }
         }
     }
@@ -546,15 +570,66 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
     )
 }
 
+/** Mockup bottom nav: top line border, emoji 16sp + 10sp label per item. */
 @Composable
-private fun CloudTab(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    OrbitButton(
-        text = label,
-        onClick = onClick,
-        modifier = modifier,
-        variant = if (selected) OrbitButtonVariant.Tertiary else OrbitButtonVariant.Ghost,
-        size = OrbitButtonSize.Small,
+private fun CloudBottomNav(
+    active: CloudRoute,
+    onSelect: (CloudRoute) -> Unit,
+) {
+    val items = listOf(
+        Triple("🏠", "Home", CloudRoute.Home),
+        Triple("🗂", "Sessions", CloudRoute.Sessions),
+        Triple("🗂", "Files", CloudRoute.Files),
+        Triple("⚙", "Settings", CloudRoute.Settings),
     )
+    Column(Modifier.fillMaxWidth().background(CloudColors.Bg)) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(CloudSpacing.BorderWidth)
+                .background(CloudColors.Line),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = CloudSpacing.PadSm),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            items.forEach { (emoji, label, destination) ->
+                val selected = active == destination
+                val color = if (selected) CloudColors.Blue else CloudColors.Faint
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(
+                            onClickLabel = label,
+                            role = Role.Button,
+                            onClick = { onSelect(destination) },
+                        )
+                        .padding(vertical = CloudSpacing.PadXxs),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(CloudSpacing.PadXxs),
+                ) {
+                    BasicText(
+                        text = emoji,
+                        style = TextStyle(
+                            fontSize = CloudColors.NavEmojiSize,
+                            textAlign = TextAlign.Center,
+                        ),
+                    )
+                    BasicText(
+                        text = label,
+                        style = TextStyle(
+                            color = color,
+                            fontSize = CloudColors.NavLabelSize,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                            textAlign = TextAlign.Center,
+                        ),
+                    )
+                }
+            }
+        }
+    }
 }
 
 /** Rename / move prompts and honest notices for unsupported file operations. */

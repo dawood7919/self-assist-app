@@ -137,6 +137,7 @@ object CloudSettingsCodec : JsonCodec<CloudSettings> {
                     put("keepRunning", settings.keepRunning)
                     put("dataSaver", settings.dataSaver)
                     put("screenshotCacheBytes", settings.screenshotCacheBytes)
+                    put("introSeen", settings.introSeen)
                 },
             )
         }
@@ -156,6 +157,7 @@ object CloudSettingsCodec : JsonCodec<CloudSettings> {
                     keepRunning = json.optBoolean("keepRunning", false),
                     dataSaver = json.optBoolean("dataSaver", false),
                     screenshotCacheBytes = json.optLong("screenshotCacheBytes", CloudSettings().screenshotCacheBytes),
+                    introSeen = json.optBoolean("introSeen", false),
                 )
             }.getOrNull()
         }

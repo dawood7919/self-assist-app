@@ -1,218 +1,252 @@
 package com.dawood.orbit.tools.cloudbrowser.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import com.dawood.orbit.core.designsystem.component.OrbitBadge
-import com.dawood.orbit.core.designsystem.component.OrbitButton
-import com.dawood.orbit.core.designsystem.component.OrbitButtonSize
-import com.dawood.orbit.core.designsystem.component.OrbitButtonVariant
-import com.dawood.orbit.core.designsystem.component.OrbitCard
-import com.dawood.orbit.core.designsystem.component.OrbitEmptyState
-import com.dawood.orbit.core.designsystem.component.OrbitProgressBar
-import com.dawood.orbit.core.designsystem.component.OrbitProgressRing
-import com.dawood.orbit.core.designsystem.component.OrbitText
-import com.dawood.orbit.core.designsystem.component.OrbitTone
-import com.dawood.orbit.core.designsystem.icon.OrbitIcons
-import com.dawood.orbit.core.designsystem.theme.OrbitTheme
-import com.dawood.orbit.core.layout.LocalOrbitWindow
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import com.dawood.orbit.tools.cloudbrowser.CloudBrowserEngine
+import com.dawood.orbit.tools.cloudbrowser.CloudColors
+import com.dawood.orbit.tools.cloudbrowser.CloudSpacing
 import com.dawood.orbit.tools.cloudbrowser.VpsMetrics
+import java.util.Locale
 
 /**
- * VPS health dashboard. Pure view: [metrics] and [isDemo] are supplied by the
- * caller, refresh is delegated to [onRefresh]. A null [metrics] means no poll
- * has succeeded yet, which is an honest empty state rather than zeroed gauges.
+ * VPS health dashboard restyled to the supplied mockup (slot 6).
+ *
+ * Pure view: [metrics] is supplied by the caller and refresh is delegated to
+ * [onRefresh]. A null [metrics] means no poll has succeeded yet, which is an
+ * honest empty state with its own refresh action rather than zeroed gauges.
+ * Every value shown is formatted from the supplied snapshot — never
+ * hardcoded.
  */
 @Composable
 fun MonitorScreen(
     metrics: VpsMetrics?,
     isDemo: Boolean,
     onRefresh: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    val twoColumn = LocalOrbitWindow.current.isAtLeastExpanded
-    Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.lg)) {
+    Column(
+        modifier = modifier
+            .background(CloudColors.Bg)
+            .padding(horizontal = CloudColors.BodyPaddingH, vertical = CloudSpacing.PadMd),
+        verticalArrangement = Arrangement.spacedBy(CloudSpacing.PadMd),
+    ) {
         Row(
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+            horizontalArrangement = Arrangement.spacedBy(CloudSpacing.PadSm),
         ) {
-            OrbitText(
+            BasicText(
                 text = "VPS Monitor",
-                style = OrbitTheme.typography.h2,
                 modifier = Modifier.weight(1f),
+                style = TextStyle(color = CloudColors.Text, fontSize = CloudColors.TitleSize, fontWeight = FontWeight.Bold),
             )
             if (isDemo) {
-                OrbitBadge(text = "Demo", tone = OrbitTone.Warning)
+                Box(
+                    modifier = Modifier
+                        .border(CloudSpacing.BorderWidth, CloudColors.Amber, RoundedCornerShape(CloudColors.BadgeRadius))
+                        .padding(horizontal = CloudSpacing.PadIcon, vertical = CloudSpacing.PadXxs),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    BasicText(
+                        text = "Demo",
+                        style = TextStyle(color = CloudColors.Amber, fontSize = CloudColors.BadgeSize, fontWeight = FontWeight.Bold),
+                    )
+                }
             }
-            OrbitButton(
-                text = "Refresh",
-                onClick = onRefresh,
-                variant = OrbitButtonVariant.Secondary,
-                size = OrbitButtonSize.Small,
-                leadingIcon = OrbitIcons.Refresh,
-            )
+            Box(
+                modifier = Modifier
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = "Refresh"
+                        role = Role.Button
+                    }
+                    .clickable(role = Role.Button, onClickLabel = "Refresh", onClick = onRefresh)
+                    .padding(CloudSpacing.PadIcon),
+                contentAlignment = Alignment.Center,
+            ) {
+                BasicText(
+                    text = "⟳",
+                    style = TextStyle(color = CloudColors.Dim, fontSize = CloudColors.TitleSize, textAlign = TextAlign.Center),
+                )
+            }
         }
+
         if (metrics == null) {
-            OrbitEmptyState(
-                title = "No data yet",
-                description = "No data yet — connect first.",
-                icon = OrbitIcons.Trending,
-                primaryActionLabel = "Refresh",
-                onPrimaryAction = onRefresh,
-            )
+            MockCard(modifier = Modifier.fillMaxWidth()) {
+                BasicText(
+                    text = "No data yet",
+                    style = TextStyle(color = CloudColors.Text, fontSize = CloudColors.BodySize, fontWeight = FontWeight.Bold),
+                )
+                BasicText(
+                    text = "No data yet — connect first.",
+                    style = TextStyle(color = CloudColors.Dim, fontSize = CloudColors.LabelSize),
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(CloudColors.Blue, RoundedCornerShape(CloudColors.PillRadius))
+                        .semantics(mergeDescendants = true) {
+                            contentDescription = "Refresh"
+                            role = Role.Button
+                        }
+                        .clickable(role = Role.Button, onClickLabel = "Refresh", onClick = onRefresh)
+                        .padding(vertical = CloudColors.CardPadding),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    BasicText(
+                        text = "Refresh",
+                        style = TextStyle(
+                            color = CloudColors.White,
+                            fontSize = CloudColors.BodySize,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center,
+                        ),
+                    )
+                }
+            }
             return
         }
-        if (twoColumn) {
-            Row(horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
-                CpuCard(metrics = metrics, modifier = Modifier.weight(1f))
-                RamCard(metrics = metrics, modifier = Modifier.weight(1f))
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
-                NetworkCard(metrics = metrics, modifier = Modifier.weight(1f))
-                DiskCard(metrics = metrics, modifier = Modifier.weight(1f))
-            }
-            UptimeCard(metrics = metrics, isDemo = isDemo, modifier = Modifier.fillMaxWidth())
-        } else {
-            CpuCard(metrics = metrics, modifier = Modifier.fillMaxWidth())
-            RamCard(metrics = metrics, modifier = Modifier.fillMaxWidth())
-            NetworkCard(metrics = metrics, modifier = Modifier.fillMaxWidth())
-            DiskCard(metrics = metrics, modifier = Modifier.fillMaxWidth())
-            UptimeCard(metrics = metrics, isDemo = isDemo, modifier = Modifier.fillMaxWidth())
-        }
-    }
-}
 
-@Composable
-private fun CpuCard(metrics: VpsMetrics, modifier: Modifier = Modifier) {
-    OrbitCard(modifier = modifier) {
-        OrbitText(
-            text = "CPU usage",
-            style = OrbitTheme.typography.caption,
-            color = OrbitTheme.colors.textMuted,
-        )
-        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            OrbitProgressRing(
-                progress = cpuProgress(metrics),
-                label = cpuLabel(metrics),
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(CloudSpacing.PadSm),
+        ) {
+            MockCard(modifier = Modifier.weight(1f)) {
+                BasicText(
+                    text = "CPU Usage",
+                    style = TextStyle(color = CloudColors.Text, fontSize = CloudColors.BodySize, fontWeight = FontWeight.Bold),
+                )
+                BasicText(
+                    text = "${metrics.cpuPct.toInt()}%",
+                    style = TextStyle(color = CloudColors.Dim, fontSize = CloudColors.LabelSize),
+                )
+                TrackBar(
+                    fraction = CloudBrowserEngine.ramProgress(metrics.cpuPct.toDouble(), 100.0),
+                    fill = CloudColors.Blue,
+                )
+            }
+            MockCard(modifier = Modifier.weight(1f)) {
+                BasicText(
+                    text = "RAM Usage",
+                    style = TextStyle(color = CloudColors.Text, fontSize = CloudColors.BodySize, fontWeight = FontWeight.Bold),
+                )
+                BasicText(
+                    text = "${formatGbShort(metrics.ramUsedGb)}/${formatGbShort(metrics.ramTotalGb)}GB",
+                    style = TextStyle(color = CloudColors.Dim, fontSize = CloudColors.LabelSize),
+                )
+                TrackBar(
+                    fraction = CloudBrowserEngine.ramProgress(metrics.ramUsedGb, metrics.ramTotalGb),
+                    fill = CloudColors.Green,
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(CloudSpacing.PadSm),
+        ) {
+            MockCard(modifier = Modifier.weight(1f)) {
+                BasicText(
+                    text = "Network",
+                    style = TextStyle(color = CloudColors.Dim, fontSize = CloudColors.LabelSize),
+                )
+                BasicText(
+                    text = "↓${metrics.netDownMbps.toLong()} ↑${metrics.netUpMbps.toLong()} Mbps",
+                    style = TextStyle(color = CloudColors.Text, fontSize = CloudColors.BodySize, fontWeight = FontWeight.Bold),
+                )
+            }
+            MockCard(modifier = Modifier.weight(1f)) {
+                BasicText(
+                    text = "Disk",
+                    style = TextStyle(color = CloudColors.Dim, fontSize = CloudColors.LabelSize),
+                )
+                BasicText(
+                    text = "${formatGbShort(metrics.diskUsedGb)}/${formatGbShort(metrics.diskTotalGb)}GB",
+                    style = TextStyle(color = CloudColors.Text, fontSize = CloudColors.BodySize, fontWeight = FontWeight.Bold),
+                )
+            }
+        }
+
+        MockCard(modifier = Modifier.fillMaxWidth()) {
+            BasicText(
+                text = "Uptime",
+                style = TextStyle(color = CloudColors.Dim, fontSize = CloudColors.LabelSize),
+            )
+            BasicText(
+                text = formatDaysHours(metrics.uptimeSecs),
+                style = TextStyle(color = CloudColors.Text, fontSize = CloudColors.BodySize, fontWeight = FontWeight.Bold),
             )
         }
-        OrbitText(text = cpuLabel(metrics), style = OrbitTheme.typography.h3)
     }
 }
 
 @Composable
-private fun RamCard(metrics: VpsMetrics, modifier: Modifier = Modifier) {
-    OrbitCard(modifier = modifier) {
-        OrbitText(
-            text = "RAM usage",
-            style = OrbitTheme.typography.caption,
-            color = OrbitTheme.colors.textMuted,
-        )
-        OrbitText(text = ramLabel(metrics), style = OrbitTheme.typography.h3)
-        OrbitProgressBar(progress = CloudBrowserEngine.ramProgress(metrics.ramUsedGb, metrics.ramTotalGb))
-    }
+private fun MockCard(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .background(CloudColors.Panel, RoundedCornerShape(CloudColors.CardRadius))
+            .border(CloudSpacing.BorderWidth, CloudColors.Line, RoundedCornerShape(CloudColors.CardRadius))
+            .padding(CloudColors.CardPadding),
+        verticalArrangement = Arrangement.spacedBy(CloudSpacing.PadIcon),
+        content = content,
+    )
 }
 
 @Composable
-private fun NetworkCard(metrics: VpsMetrics, modifier: Modifier = Modifier) {
-    OrbitCard(modifier = modifier) {
-        OrbitText(
-            text = "Network",
-            style = OrbitTheme.typography.caption,
-            color = OrbitTheme.colors.textMuted,
-        )
-        OrbitText(text = networkLabel(metrics), style = OrbitTheme.typography.h3)
-        OrbitProgressBar(progress = downProgress(metrics))
-        OrbitProgressBar(progress = upProgress(metrics))
-        OrbitText(
-            text = networkCaption(metrics),
-            style = OrbitTheme.typography.caption,
-            color = OrbitTheme.colors.textMuted,
-        )
-    }
-}
-
-@Composable
-private fun DiskCard(metrics: VpsMetrics, modifier: Modifier = Modifier) {
-    OrbitCard(modifier = modifier) {
-        OrbitText(
-            text = "Disk usage",
-            style = OrbitTheme.typography.caption,
-            color = OrbitTheme.colors.textMuted,
-        )
-        OrbitText(text = diskLabel(metrics), style = OrbitTheme.typography.h3)
-        OrbitProgressBar(progress = CloudBrowserEngine.ramProgress(metrics.diskUsedGb, metrics.diskTotalGb))
-    }
-}
-
-@Composable
-private fun UptimeCard(metrics: VpsMetrics, isDemo: Boolean, modifier: Modifier = Modifier) {
-    OrbitCard(modifier = modifier) {
-        OrbitText(
-            text = "Uptime",
-            style = OrbitTheme.typography.caption,
-            color = OrbitTheme.colors.textMuted,
-        )
-        OrbitText(
-            text = CloudBrowserEngine.formatUptime(metrics.uptimeSecs),
-            style = OrbitTheme.typography.h3,
-        )
-        OrbitText(
-            text = uptimeCaption(metrics, isDemo),
-            style = OrbitTheme.typography.caption,
-            color = OrbitTheme.colors.textMuted,
+private fun TrackBar(fraction: Float, fill: Color) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(CloudSpacing.GaugeSize)
+            .background(CloudColors.LineSoft, RoundedCornerShape(CloudSpacing.TrackCorner)),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(fraction.coerceIn(0f, 1f))
+                .height(CloudSpacing.GaugeSize)
+                .background(fill, RoundedCornerShape(CloudSpacing.TrackCorner)),
         )
     }
 }
 
-private fun cpuProgress(metrics: VpsMetrics): Float =
-    CloudBrowserEngine.ramProgress(metrics.cpuPct.toDouble(), 100.0)
+/** Compact GB figure: whole values print without decimals (8, not 8.0). */
+private fun formatGbShort(gb: Double): String {
+    val safe = gb.coerceAtLeast(0.0)
+    val oneDecimal = String.format(Locale.US, "%.1f", safe)
+    return if (oneDecimal.endsWith(".0")) safe.toInt().toString() else oneDecimal
+}
 
-private fun cpuLabel(metrics: VpsMetrics): String = "${metrics.cpuPct.toInt()}%"
-
-private fun ramLabel(metrics: VpsMetrics): String =
-    "${CloudBrowserEngine.formatBytes(gbToBytes(metrics.ramUsedGb))} / " +
-        CloudBrowserEngine.formatBytes(gbToBytes(metrics.ramTotalGb))
-
-private fun diskLabel(metrics: VpsMetrics): String =
-    "${CloudBrowserEngine.formatBytes(gbToBytes(metrics.diskUsedGb))} / " +
-        CloudBrowserEngine.formatBytes(gbToBytes(metrics.diskTotalGb))
-
-private fun networkLabel(metrics: VpsMetrics): String =
-    "Down ${metrics.netDownMbps.toLong()} • Up ${metrics.netUpMbps.toLong()} Mbps"
-
-private fun downProgress(metrics: VpsMetrics): Float? =
-    if (metrics.bandwidthMbps > 0.0) {
-        CloudBrowserEngine.ramProgress(metrics.netDownMbps, metrics.bandwidthMbps)
-    } else {
-        null
-    }
-
-private fun upProgress(metrics: VpsMetrics): Float? =
-    if (metrics.bandwidthMbps > 0.0) {
-        CloudBrowserEngine.ramProgress(metrics.netUpMbps, metrics.bandwidthMbps)
-    } else {
-        null
-    }
-
-private fun networkCaption(metrics: VpsMetrics): String =
-    if (metrics.bandwidthMbps > 0.0) {
-        "Share of a ${metrics.bandwidthMbps.toLong()} Mbps link"
-    } else {
-        "Link speed unknown — showing activity"
-    }
-
-private fun uptimeCaption(metrics: VpsMetrics, isDemo: Boolean): String =
-    if (isDemo) {
-        "Latency ${metrics.latencyMs} ms • Demo snapshot"
-    } else {
-        "Latency ${metrics.latencyMs} ms"
-    }
-
-private fun gbToBytes(gb: Double): Long =
-    (gb.coerceAtLeast(0.0) * 1024.0 * 1024.0 * 1024.0).toLong()
+/** Day/hour uptime driven by the snapshot ("12 Days 04 Hours"). */
+private fun formatDaysHours(uptimeSecs: Long): String {
+    val total = uptimeSecs.coerceAtLeast(0L)
+    val days = total / 86_400
+    val hours = (total % 86_400) / 3_600
+    val dayLabel = if (days == 1L) "Day" else "Days"
+    val hourLabel = if (hours == 1L) "Hour" else "Hours"
+    return "$days $dayLabel ${hours.toString().padStart(2, '0')} $hourLabel"
+}

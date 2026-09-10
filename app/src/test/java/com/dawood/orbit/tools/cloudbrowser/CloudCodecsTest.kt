@@ -29,10 +29,17 @@ class CloudCodecsTest {
     @Test
     fun settingsCodecRoundTrip() {
         val settings = listOf(
-            CloudSettings(defaultBrowser = BrowserKind.Chrome, defaultQuality = Quality.High, defaultResolution = Resolution.Auto, defaultFrameRate = 60, hwAccel = false, autoReconnect = false, keepRunning = true, dataSaver = true, screenshotCacheBytes = 1024L),
+            CloudSettings(defaultBrowser = BrowserKind.Chrome, defaultQuality = Quality.High, defaultResolution = Resolution.Auto, defaultFrameRate = 60, hwAccel = false, autoReconnect = false, keepRunning = true, dataSaver = true, screenshotCacheBytes = 1024L, introSeen = true),
         )
 
         assertEquals(settings, CloudSettingsCodec.decode(CloudSettingsCodec.encode(settings)))
+    }
+
+    @Test
+    fun settingsCodecIntroSeenDefaultsFalseWhenMissing() {
+        val settings = CloudSettingsCodec.decode("[{}]")
+        assertEquals(1, settings.size)
+        assertEquals(false, settings[0].introSeen)
     }
 
     @Test

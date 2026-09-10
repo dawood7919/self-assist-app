@@ -1,37 +1,42 @@
 package com.dawood.orbit.tools.cloudbrowser.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
-import com.dawood.orbit.core.designsystem.component.OrbitBadge
-import com.dawood.orbit.core.designsystem.component.OrbitButton
-import com.dawood.orbit.core.designsystem.component.OrbitButtonSize
-import com.dawood.orbit.core.designsystem.component.OrbitButtonVariant
-import com.dawood.orbit.core.designsystem.component.OrbitCard
-import com.dawood.orbit.core.designsystem.component.OrbitEmptyState
-import com.dawood.orbit.core.designsystem.component.OrbitIcon
-import com.dawood.orbit.core.designsystem.component.OrbitProgressBar
-import com.dawood.orbit.core.designsystem.component.OrbitTabs
-import com.dawood.orbit.core.designsystem.component.OrbitText
-import com.dawood.orbit.core.designsystem.component.OrbitTone
-import com.dawood.orbit.core.designsystem.icon.OrbitIcons
-import com.dawood.orbit.core.designsystem.theme.OrbitTheme
-import com.dawood.orbit.core.layout.LocalOrbitWindow
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import com.dawood.orbit.tools.cloudbrowser.CloudBrowserEngine
+import com.dawood.orbit.tools.cloudbrowser.CloudColors
+import com.dawood.orbit.tools.cloudbrowser.CloudPill
+import com.dawood.orbit.tools.cloudbrowser.CloudSpacing
 import com.dawood.orbit.tools.cloudbrowser.DownloadFilter
 import com.dawood.orbit.tools.cloudbrowser.DownloadItem
 import com.dawood.orbit.tools.cloudbrowser.DownloadState
 import com.dawood.orbit.tools.cloudbrowser.FileType
 
 /**
- * Download queue with type filters. Filtering goes through
- * [CloudBrowserEngine.filterDownloads]; progress fractions reuse
- * [CloudBrowserEngine.ramProgress] so no arithmetic lives in the view.
+ * Download queue restyled to the supplied mockup (slot 11).
+ *
+ * Exact visual copy: filter pills [All|Docs|Videos|Images|Archives], file
+ * cards with leading emoji, bold name, dim size lines, state-driven Done
+ * badge, driven "Downloading N%" plus 4dp blue progress bar, outline
+ * "Download to Phone" wired to [onDownloadToPhone]. Filtering, progress
+ * fractions and empty logic reuse [CloudBrowserEngine].
  */
 @Composable
 fun DownloadsScreen(
@@ -39,49 +44,80 @@ fun DownloadsScreen(
     filter: DownloadFilter,
     onFilter: (DownloadFilter) -> Unit,
     onDownloadToPhone: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    val twoColumn = LocalOrbitWindow.current.isAtLeastExpanded
     val visible = CloudBrowserEngine.filterDownloads(items, filter)
-    Column(verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.lg)) {
-        OrbitText(text = "Downloads", style = OrbitTheme.typography.h2)
-        OrbitTabs(
-            tabs = DownloadFilter.entries.map { it.name },
-            selectedIndex = DownloadFilter.entries.indexOf(filter),
-            onSelect = { onFilter(DownloadFilter.entries.getOrElse(it) { filter }) },
-        )
-        if (visible.isEmpty()) {
-            OrbitEmptyState(
-                title = "No downloads",
-                description = emptyDescription(filter),
-                icon = OrbitIcons.Download,
-                primaryActionLabel = "Show all",
-                onPrimaryAction = { onFilter(DownloadFilter.All) },
-            )
-            return
-        }
-        if (twoColumn) {
-            visible.chunked(2).forEach { pair ->
-                Row(horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm)) {
-                    pair.forEach { item ->
-                        DownloadCard(
-                            item = item,
-                            onDownloadToPhone = onDownloadToPhone,
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                    if (pair.size == 1) {
-                        DownloadPlaceholder(modifier = Modifier.weight(1f))
-                    }
-                }
-            }
-        } else {
-            visible.forEach { item ->
-                DownloadCard(
-                    item = item,
-                    onDownloadToPhone = onDownloadToPhone,
-                    modifier = Modifier.fillMaxWidth(),
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(CloudSpacing.PadMd)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(CloudSpacing.PadSm),
+        ) {
+            DownloadFilter.entries.forEach { option ->
+                CloudPill(
+                    text = option.name,
+                    selected = option == filter,
+                    onSelect = { onFilter(option) },
+                    modifier = Modifier.weight(1f),
                 )
             }
+        }
+        if (visible.isEmpty()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(CloudColors.CardRadius))
+                    .background(CloudColors.Panel)
+                    .border(CloudSpacing.BorderWidth, CloudColors.Line, RoundedCornerShape(CloudColors.CardRadius))
+                    .padding(CloudColors.CardPadding),
+                verticalArrangement = Arrangement.spacedBy(CloudSpacing.PadSm),
+            ) {
+                BasicText(
+                    text = "No downloads",
+                    style = TextStyle(
+                        color = CloudColors.Text,
+                        fontSize = CloudColors.TitleSize,
+                        fontWeight = FontWeight.Bold,
+                    ),
+                )
+                BasicText(
+                    text = emptyDescription(filter),
+                    style = TextStyle(
+                        color = CloudColors.Dim,
+                        fontSize = CloudColors.SmallSize,
+                    ),
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(CloudColors.ButtonRadius))
+                        .background(CloudColors.Blue)
+                        .clickable(
+                            onClickLabel = "Show all",
+                            role = Role.Button,
+                            onClick = { onFilter(DownloadFilter.All) },
+                        )
+                        .padding(vertical = CloudSpacing.PadMd, horizontal = CloudColors.CardPadding),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    BasicText(
+                        text = "Show all",
+                        style = TextStyle(
+                            color = CloudColors.White,
+                            fontSize = CloudColors.BodySize,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center,
+                        ),
+                    )
+                }
+            }
+            return
+        }
+        visible.forEach { item ->
+            DownloadCard(
+                item = item,
+                onDownloadToPhone = onDownloadToPhone,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 }
@@ -92,81 +128,165 @@ private fun DownloadCard(
     onDownloadToPhone: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    OrbitCard(modifier = modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(CloudColors.CardRadius))
+            .background(CloudColors.Panel)
+            .border(CloudSpacing.BorderWidth, CloudColors.Line, RoundedCornerShape(CloudColors.CardRadius))
+            .padding(CloudColors.CardPadding),
+        verticalArrangement = Arrangement.spacedBy(CloudSpacing.PadSm),
+    ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+            horizontalArrangement = Arrangement.spacedBy(CloudSpacing.PadSm),
         ) {
-            OrbitIcon(
-                icon = iconFor(item.type),
-                contentDescription = "${item.type.name} file ${item.fileName}",
-                tint = OrbitTheme.colors.accent,
+            BasicText(
+                text = emojiFor(item.type),
+                style = TextStyle(
+                    color = CloudColors.Text,
+                    fontSize = CloudColors.TitleSize,
+                ),
             )
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xxs),
+                verticalArrangement = Arrangement.spacedBy(CloudSpacing.PadXxs),
             ) {
-                OrbitText(text = item.fileName, style = OrbitTheme.typography.h4)
-                OrbitText(
-                    text = downloadSubtitle(item),
-                    style = OrbitTheme.typography.caption,
-                    color = OrbitTheme.colors.textMuted,
-                )
-            }
-            when (item.state) {
-                DownloadState.Completed -> Row(
+                Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.sm),
+                    horizontalArrangement = Arrangement.spacedBy(CloudSpacing.PadIcon),
                 ) {
-                    OrbitBadge(text = "Completed", tone = OrbitTone.Success)
-                    OrbitButton(
-                        text = "Download to Phone",
-                        onClick = { onDownloadToPhone(item.id) },
-                        variant = OrbitButtonVariant.Secondary,
-                        size = OrbitButtonSize.Small,
-                        leadingIcon = OrbitIcons.Download,
+                    BasicText(
+                        text = item.fileName,
+                        modifier = Modifier.weight(1f, fill = false),
+                        style = TextStyle(
+                            color = CloudColors.Text,
+                            fontSize = CloudColors.BodySize,
+                            fontWeight = FontWeight.Bold,
+                        ),
+                    )
+                    if (item.state == DownloadState.Completed) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(CloudColors.BadgeRadius))
+                                .background(CloudColors.Green.copy(alpha = 0.15f))
+                                .padding(horizontal = CloudSpacing.PadSm, vertical = CloudSpacing.PadXs),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            BasicText(
+                                text = "Done",
+                                style = TextStyle(
+                                    color = CloudColors.Green,
+                                    fontSize = CloudColors.BadgeSize,
+                                ),
+                            )
+                        }
+                    }
+                    if (item.state == DownloadState.Failed) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(CloudColors.BadgeRadius))
+                                .background(CloudColors.Red.copy(alpha = 0.15f))
+                                .padding(horizontal = CloudSpacing.PadSm, vertical = CloudSpacing.PadXs),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            BasicText(
+                                text = "Failed",
+                                style = TextStyle(
+                                    color = CloudColors.Red,
+                                    fontSize = CloudColors.BadgeSize,
+                                ),
+                            )
+                        }
+                    }
+                }
+                BasicText(
+                    text = downloadSubtitle(item),
+                    style = TextStyle(
+                        color = CloudColors.Dim,
+                        fontSize = CloudColors.SmallSize,
+                    ),
+                )
+                if (item.state == DownloadState.Downloading) {
+                    BasicText(
+                        text = "Downloading ${downloadPct(item)}%",
+                        style = TextStyle(
+                            color = CloudColors.Dim,
+                            fontSize = CloudColors.SmallSize,
+                        ),
                     )
                 }
-                DownloadState.Downloading -> OrbitBadge(
-                    text = "Downloading",
-                    tone = OrbitTone.Info,
-                    showDot = true,
-                )
-                DownloadState.Failed -> OrbitBadge(text = "Failed", tone = OrbitTone.Error)
             }
         }
         if (item.state == DownloadState.Downloading) {
-            OrbitProgressBar(
-                progress = CloudBrowserEngine.ramProgress(
-                    item.downloadedBytes.toDouble(),
-                    item.sizeBytes.toDouble(),
-                ),
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(CloudSpacing.TrackHeight)
+                    .clip(RoundedCornerShape(CloudSpacing.ProgressRadius))
+                    .background(CloudColors.LineSoft),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(
+                            CloudBrowserEngine.ramProgress(
+                                item.downloadedBytes.toDouble(),
+                                item.sizeBytes.toDouble(),
+                            ).coerceIn(0f, 1f),
+                        )
+                        .height(CloudSpacing.TrackHeight)
+                        .clip(RoundedCornerShape(CloudSpacing.ProgressRadius))
+                        .background(CloudColors.Blue),
+                )
+            }
         }
-    }
-}
-
-@Composable
-private fun DownloadPlaceholder(modifier: Modifier = Modifier) {
-    OrbitCard(modifier = modifier) {
-        OrbitText(
-            text = "Finished downloads stay listed here.",
-            style = OrbitTheme.typography.caption,
-            color = OrbitTheme.colors.textMuted,
-        )
+        if (item.state == DownloadState.Completed) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(CloudColors.ButtonRadius))
+                    .background(CloudColors.Panel2)
+                    .border(
+                        CloudSpacing.BorderWidth,
+                        CloudColors.Line,
+                        RoundedCornerShape(CloudColors.ButtonRadius),
+                    )
+                    .clickable(
+                        onClickLabel = "Download to Phone",
+                        role = Role.Button,
+                        onClick = { onDownloadToPhone(item.id) },
+                    )
+                    .padding(vertical = CloudColors.CardPadding, horizontal = CloudSpacing.PadSm),
+                contentAlignment = Alignment.Center,
+            ) {
+                BasicText(
+                    text = "Download to Phone",
+                    style = TextStyle(
+                        color = CloudColors.Text,
+                        fontSize = CloudColors.BodySize,
+                        textAlign = TextAlign.Center,
+                    ),
+                )
+            }
+        }
     }
 }
 
 private fun downloadSubtitle(item: DownloadItem): String =
     when (item.state) {
         DownloadState.Completed ->
-            "${CloudBrowserEngine.formatBytes(item.sizeBytes)} • ${item.sourcePath}"
+            "${CloudBrowserEngine.formatBytes(item.sizeBytes)} · Stored on VPS"
         DownloadState.Downloading ->
-            "${CloudBrowserEngine.formatBytes(item.downloadedBytes)} of " +
-                CloudBrowserEngine.formatBytes(item.sizeBytes)
+            CloudBrowserEngine.formatBytes(item.sizeBytes)
         DownloadState.Failed ->
             "${CloudBrowserEngine.formatBytes(item.sizeBytes)} • Transfer failed"
     }
+
+private fun downloadPct(item: DownloadItem): Int {
+    if (item.sizeBytes <= 0L) return 0
+    return ((item.downloadedBytes.toDouble() / item.sizeBytes.toDouble()) * 100.0)
+        .toInt().coerceIn(0, 100)
+}
 
 private fun emptyDescription(filter: DownloadFilter): String =
     when (filter) {
@@ -177,12 +297,12 @@ private fun emptyDescription(filter: DownloadFilter): String =
         DownloadFilter.Archives -> "No archives in the queue for this filter."
     }
 
-private fun iconFor(type: FileType): ImageVector =
+private fun emojiFor(type: FileType): String =
     when (type) {
-        FileType.Folder -> OrbitIcons.Folder
-        FileType.Doc -> OrbitIcons.Pdf
-        FileType.Video -> OrbitIcons.Video
-        FileType.Image -> OrbitIcons.ImageFile
-        FileType.Archive -> OrbitIcons.Zip
-        FileType.Other -> OrbitIcons.File
+        FileType.Folder -> "📁"
+        FileType.Doc -> "📄"
+        FileType.Video -> "🎬"
+        FileType.Image -> "🖼"
+        FileType.Archive -> "🗜"
+        FileType.Other -> "📦"
     }
