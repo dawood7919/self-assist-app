@@ -131,18 +131,11 @@ dependencies {
     // GPL-3.0, which is why the whole application is GPL-3.0 — see LICENSE.
     implementation(libs.newpipe.extractor)
 
-    // Cloud Browser REAL backend (Workstream 1): SSH transport. BouncyCastle
-    // stock artifacts are excluded here because Android ships its own stripped
-    // BC copy; crypto comes from SpongyCastle ("SC") instead, initialised in
-    // SshManager. Never add the stock BC provider.
-    implementation(libs.sshj) {
-        exclude(group = "org.bouncycastle", module = "bcprov-jdk18on")
-        exclude(group = "org.bouncycastle", module = "bcpkix-jdk18on")
-    }
-    implementation(libs.spongycastle.prov)
-    implementation(libs.spongycastle.pkix)
-    implementation(libs.spongycastle.pg)
-    implementation(libs.slf4j.android)
+    // Cloud Browser REAL backend (Workstream 1): SSH transport via mwiede
+    // JSch — pure-Java SSH2 with zero dependencies. No BouncyCastle or
+    // SpongyCastle provider is installed anywhere: Android ships its own
+    // stripped crypto copy and JSch needs none of it.
+    implementation(libs.jsch)
 
     coreLibraryDesugaring(libs.desugar.jdk.libs)
 

@@ -32,8 +32,6 @@ import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.UUID
-import net.schmizz.sshj.sftp.RemoteResourceInfo
-import net.schmizz.sshj.sftp.SFTPClient
 import okhttp3.OkHttpClient
 import org.json.JSONObject
 
@@ -603,14 +601,14 @@ class RealVpsApi(
                 val rows = entries
                     .filter { it.name != "." && it.name != ".." }
                     .map { info ->
-                        val isDir = info.attributes.isDirectory
+                        val isDir = info.isDir
                         RemoteFile(
                             path = joinPath(dir, info.name),
                             name = info.name,
                             isDir = isDir,
                             type = fileTypeFor(info.name, isDir),
-                            sizeBytes = info.attributes.size.coerceAtLeast(0L),
-                            modifiedEpochMs = info.attributes.mtime.toLong() * 1_000L,
+                            sizeBytes = info.sizeBytes.coerceAtLeast(0L),
+                            modifiedEpochMs = info.mtimeSecs * 1_000L,
                         )
                     }
                     .sortedWith(compareByDescending<RemoteFile> { it.isDir }.thenBy { it.name.lowercase() })
@@ -648,7 +646,7 @@ class RealVpsApi(
                 val entry = statOrNull(sftp, srcPath)
                     ?: return@withSftp Result.failure(Exception("No such file: $srcPath"))
                 val destInfo = statOrNull(sftp, destDir)
-                if (destInfo == null || !destInfo.attributes.isDirectory) {
+                if (destInfo == null || !destInfo.isDir) {
                     return@withSftp Result.failure(Exception("No such directory: $dstDir"))
                 }
                 try {
@@ -670,7 +668,7 @@ class RealVpsApi(
             withSftp { sftp ->
                 val info = statOrNull(sftp, path)
                     ?: return@withSftp Result.failure(Exception("No such file: $path"))
-                if (!info.attributes.isDirectory) {
+                if (!info.isDir) {
                     return@withSftp try {
                         sftp.rm(path)
                         Result.success(Unit)
@@ -723,7 +721,7 @@ class RealVpsApi(
             withSftp { sftp ->
                 val info = statOrNull(sftp, clean)
                     ?: return@withSftp Result.failure(Exception("No such file: $sourcePath"))
-                if (info.attributes.isDirectory) {
+                if (info.isDir) {
                     return@withSftp Result.failure(Exception("Cannot download a directory: $sourcePath"))
                 }
                 val name = clean.substringAfterLast('/')
@@ -731,7 +729,7 @@ class RealVpsApi(
                     id = UUID.randomUUID().toString(),
                     fileName = name,
                     type = fileTypeFor(name, false),
-                    sizeBytes = info.attributes.size.coerceAtLeast(0L),
+                    sizeBytes = info.sizeBytes.coerceAtLeast(0L),
                     downloadedBytes = 0L,
                     state = DownloadState.Downloading,
                     sourcePath = clean,
@@ -755,7 +753,7 @@ class RealVpsApi(
                 ?: return@safeCall Result.failure(Exception("Unknown download id: $downloadId"))
             withSftp { sftp ->
                 val info = statOrNull(sftp, item.sourcePath)
-                if (info == null || info.attributes.isDirectory) {
+                if (info == null || info.isDir) {
                     mirror.upsert(item.copy(state = DownloadState.Failed))
                     return@withSftp Result.failure(Exception("No such file: ${item.sourcePath}"))
                 }
@@ -791,7 +789,7 @@ class RealVpsApi(
                         saved.exceptionOrNull() ?: Exception("Could not save the download on the phone."),
                     )
                 }
-                val total = maxOf(info.attributes.size, localBytes).coerceAtLeast(0L)
+                val total = maxOf(info.sizeBytes, localBytes).coerceAtLeast(0L)
                 mirror.upsert(item.copy(sizeBytes = total, downloadedBytes = total, state = DownloadState.Completed))
                 Result.success(Unit)
             }
@@ -1101,7 +1099,7 @@ class RealVpsApi(
             .put("params", JSONObject())
             .toString()
 
-    private fun <T> withSftp(block: (SFTPClient) -> Result<T>): Result<T> {
+    private fun <T> withSftp(block: (SshSftp) -> Result<T>): Result<T> {
         val sftp = ssh.sftp().getOrElse { return Result.failure(it) }
         try {
             return block(sftp)
@@ -1202,7 +1200,7 @@ class RealVpsApi(
         }
     }
 
-    private fun statOrNull(sftp: SFTPClient, path: String): RemoteResourceInfo? =
+    private fun statOrNull(sftp: SshSftp, path: String): SftpEntry? =
         runCatching { sftp.stat(path) }.getOrNull()
 
     private fun canonicalDir(path: String): String {
