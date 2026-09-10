@@ -259,11 +259,9 @@ object SshMetricsParser {
         return null
     }
 
-    companion object {
-        private val SECTION_MARKERS = listOf("__CPU__", "__MEM__", "__UP__", "__DF__", "__NET__", "__END__")
-        private val WHITESPACE = Regex("\\s+")
-        private val MEM_VALUE = Regex(":\\s*(\\d+)")
-        private const val KB_PER_GB = 1024.0 * 1024.0
-        private const val BYTES_PER_GB = 1024.0 * 1024.0 * 1024.0
-    }
+    private val SECTION_MARKERS = listOf("__CPU__", "__MEM__", "__UP__", "__DF__", "__NET__", "__END__")
+    private val WHITESPACE = Regex("\\s+")
+    private val MEM_VALUE = Regex(":\\s*(\\d+)")
+    private const val KB_PER_GB = 1024.0 * 1024.0
+    private const val BYTES_PER_GB = 1024.0 * 1024.0 * 1024.0
 }
