@@ -24,6 +24,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -52,12 +53,19 @@ import com.dawood.orbit.tools.cloudbrowser.screens.MonitorScreen
 import com.dawood.orbit.tools.cloudbrowser.screens.NewSessionScreen
 import com.dawood.orbit.tools.cloudbrowser.screens.SessionsScreen
 import com.dawood.orbit.tools.cloudbrowser.screens.SettingsScreen
+import com.dawood.orbit.tools.cloudbrowser.real.CdpClient
+import com.dawood.orbit.tools.cloudbrowser.real.ChromiumManager
+import com.dawood.orbit.tools.cloudbrowser.real.EphemeralCredentials
+import com.dawood.orbit.tools.cloudbrowser.real.RealVpsApi
+import com.dawood.orbit.tools.cloudbrowser.real.SshManager
+import com.dawood.orbit.tools.cloudbrowser.real.ViewportBridge
 import com.dawood.orbit.tools.model.Tool
 import com.dawood.orbit.tools.shell.ToolShell
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
 
 /** Tool-owned file dialog: rename / move prompts or an honest notice. */
 private sealed interface FileDialog {
@@ -74,17 +82,34 @@ private sealed interface FileDialog {
  * is visible only on the Home route, first-run intro until `introSeen` is
  * persisted. The ToolShell top bar stays as required chrome.
  *
- * Demo backend: [FakeVpsApi] answers instantly with canned data — replace it
- * with a real [VpsApi] implementation to go live. While the fake is in use
- * [isDemo] stays true and every screen shows the honest demo banner.
+ * Live backend: [RealVpsApi] talks to the VPS over SSH and drives headless
+ * Chromium through an SSH tunnel, posting screencast frames into the
+ * viewport bridge. [isDemo] stays false while the real backend is in use;
+ * the banner shows while the control connection is down.
  * Screens receive values plus callbacks and never call the API themselves.
  */
 @Composable
 fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    // Replace FakeVpsApi() with a real VpsApi implementation to go live.
-    val api = remember { FakeVpsApi() }
-    val isDemo = true
+    val appContext = context.applicationContext
+    // Live backend: SSH transport plus headless Chromium reached over an SSH
+    // tunnel, with screencast frames posted into the viewport bridge.
+    // Every blocking VpsApi call below runs on Dispatchers.IO.
+    val ssh = remember(appContext) { SshManager(appContext) }
+    val okHttp = remember { OkHttpClient() }
+    val viewportBridge = remember { ViewportBridge() }
+    val api = remember(appContext) {
+        RealVpsApi(
+            appCtx = appContext,
+            ssh = ssh,
+            chromium = ChromiumManager(ssh) { CdpClient(okHttp) },
+            okHttp = okHttp,
+            onFrame = { sessionId, bytes -> viewportBridge.post(sessionId, bytes) },
+        )
+    }
+    // No fake backend in use: screens render their live (non-demo) copy. The
+    // banner below still shows while the control connection is down.
+    val isDemo = false
 
     val nav = remember { CloudNavState() }
     var route by remember { mutableStateOf(nav.current) }
@@ -111,6 +136,20 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
     var dialogError by remember { mutableStateOf<String?>(null) }
     var demoNotice by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+
+    // Live viewport: latest screencast bytes per session from the bridge,
+    // decoded to an ImageBitmap off the Main thread for BrowserViewScreen.
+    val framesBySession by viewportBridge.frames.collectAsStateWithLifecycle()
+    val latestFrameBytes = activeSessionId?.let { framesBySession[it] }
+    var liveFrame by remember { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(latestFrameBytes, activeSessionId) {
+        val id = activeSessionId
+        liveFrame = if (id == null || latestFrameBytes == null) {
+            null
+        } else {
+            withContext(Dispatchers.Default) { viewportBridge.decodeLatest(id) }
+        }
+    }
 
     fun refreshSessions() {
         scope.launch {
@@ -230,7 +269,7 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
         tool = tool,
         onBack = { goBack() },
         modifier = modifier,
-        subtitle = demoNotice ?: server?.let { it.name + " • Demo" } ?: "Demo • Not connected",
+        subtitle = demoNotice ?: server?.name ?: "Not connected",
         actions = {
             OrbitIconButton(
                 icon = OrbitIcons.Refresh,
@@ -284,9 +323,9 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
                                 },
                             )
                         } else {
-                            if (isDemo) {
+                            if (isDemo || connectionState != ConnectionState.Connected) {
                                 CloudBadge(
-                                    text = "○ Demo — Not connected",
+                                    text = if (isDemo) "○ Demo — Not connected" else "○ Not connected",
                                     green = false,
                                 )
                             }
@@ -313,11 +352,23 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
                                     initial = server,
                                     isDemo = isDemo,
                                     onTestConnection = { api.testConnection(it) },
-                                    onConnect = { draft ->
+                                    onConnect = { draft, password ->
                                         val withId = if (draft.id.isBlank()) {
                                             draft.copy(id = UUID.randomUUID().toString())
                                         } else {
                                             draft
+                                        }
+                                        // RAM-only handoff: copy the password into
+                                        // EphemeralCredentials (never logged, never persisted)
+                                        // before connect, then zero this copy. SshManager
+                                        // consumes and zeroes the stored copy during auth.
+                                        val passwordChars = password.toCharArray()
+                                        try {
+                                            if (withId.authMethod == AuthMethod.Password) {
+                                                EphemeralCredentials.setPassword(withId.id, passwordChars)
+                                            }
+                                        } finally {
+                                            passwordChars.fill('\u0000')
                                         }
                                         // Runs on Dispatchers.IO via ConnectScreen; blocking calls are safe here.
                                         api.connect(withId).onSuccess {
@@ -339,6 +390,7 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
                                     config = streamConfig,
                                     onConfigChange = { streamConfig = it },
                                     onOpenInputOverlay = { push(CloudRoute.InputOverlay) },
+                                    frame = liveFrame,
                                 )
                                 CloudRoute.ActiveSession -> {
                                     val session = sessions.firstOrNull { it.id == activeSessionId }
@@ -480,18 +532,47 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
                                     mode = streamConfig.mode,
                                     onMode = { streamConfig = streamConfig.copy(mode = it) },
                                     onKey = { key ->
-                                        demoNotice = "Sent $key — demo backend, not delivered"
+                                        val id = activeSessionId
+                                            ?: sessions.firstOrNull { it.state == SessionState.Active }?.id
+                                        if (id == null) {
+                                            demoNotice = "No active session — launch one first"
+                                        } else {
+                                            scope.launch {
+                                                val result = withContext(Dispatchers.IO) { api.sendKey(id, key) }
+                                                result.onFailure { demoNotice = it.message }
+                                            }
+                                        }
                                     },
-                                    onTouchDrag = { _, _ ->
-                                        if (demoNotice?.startsWith("Touchpad") != true) {
-                                            demoNotice = "Touchpad input — demo backend, not delivered"
+                                    onTouchDrag = { dx, dy ->
+                                        val id = activeSessionId
+                                            ?: sessions.firstOrNull { it.state == SessionState.Active }?.id
+                                        if (id != null) {
+                                            scope.launch {
+                                                val result = withContext(Dispatchers.IO) {
+                                                    api.sendPointerMove(id, dx, dy)
+                                                }
+                                                result.onFailure { demoNotice = it.message }
+                                            }
                                         }
                                     },
                                     onToolbar = { action ->
                                         when (action) {
                                             "Refresh" -> refreshCurrent()
                                             "Zoom" -> push(CloudRoute.BrowserView)
-                                            else -> demoNotice = "$action is not available in this demo"
+                                            else -> {
+                                                val id = activeSessionId
+                                                    ?: sessions.firstOrNull { it.state == SessionState.Active }?.id
+                                                if (id == null) {
+                                                    demoNotice = "No active session — launch one first"
+                                                } else {
+                                                    scope.launch {
+                                                        val result = withContext(Dispatchers.IO) {
+                                                            api.sendToolbarAction(id, action)
+                                                        }
+                                                        result.onFailure { demoNotice = it.message }
+                                                    }
+                                                }
+                                            }
                                         }
                                     },
                                 )

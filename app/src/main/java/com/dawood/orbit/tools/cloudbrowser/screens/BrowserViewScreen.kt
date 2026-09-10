@@ -1,5 +1,6 @@
 package com.dawood.orbit.tools.cloudbrowser.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,7 +24,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -59,6 +63,7 @@ fun BrowserViewScreen(
     onConfigChange: (StreamConfig) -> Unit,
     onOpenInputOverlay: () -> Unit,
     modifier: Modifier = Modifier,
+    frame: ImageBitmap? = null,
 ) {
     var address by rememberSaveable { mutableStateOf(HOME_URL) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
@@ -185,6 +190,21 @@ fun BrowserViewScreen(
                 MenuRow(text = "Input overlay", onClick = { menuOpen = false; onOpenInputOverlay() })
                 MenuRow(text = "Home page", onClick = { menuOpen = false; commitUrl(HOME_URL) })
             }
+        }
+
+        // Live viewport: latest decoded screencast frame when the backend is
+        // streaming, otherwise nothing (the mockup below stays as-is).
+        if (frame != null) {
+            Image(
+                bitmap = frame,
+                contentDescription = "Live browser viewport",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(CloudColors.CardRadius))
+                    .background(CloudColors.Panel)
+                    .border(CloudSpacing.BorderWidth, CloudColors.Line, RoundedCornerShape(CloudColors.CardRadius)),
+                contentScale = ContentScale.Fit,
+            )
         }
 
         // Centered multicolor Google wordmark.

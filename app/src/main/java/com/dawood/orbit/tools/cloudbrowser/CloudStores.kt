@@ -63,3 +63,28 @@ class SettingsStore private constructor(context: Context) :
             }
     }
 }
+
+/**
+ * Queued phone downloads mirror, backed by cloud_downloads.json.
+ *
+ * The REAL backend ([com.dawood.orbit.tools.cloudbrowser.real.RealVpsApi])
+ * mirrors its transfer queue here so the Downloads screen survives process
+ * death; rows flip to Completed/Failed as transfers finish.
+ */
+class DownloadStore private constructor(context: Context) :
+    EntityRepository<DownloadItem>(
+        JsonFileStore(File(context.filesDir, "cloud_downloads.json"), CloudDownloadCodec),
+    ) {
+
+    override fun idOf(item: DownloadItem): String = item.id
+
+    companion object {
+        @Volatile
+        private var instance: DownloadStore? = null
+
+        fun get(context: Context): DownloadStore =
+            instance ?: synchronized(this) {
+                instance ?: DownloadStore(context.applicationContext).also { instance = it }
+            }
+    }
+}

@@ -24,3 +24,15 @@
 -dontwarn org.mozilla.classfile.**
 -dontwarn com.google.errorprone.annotations.**
 -dontwarn edu.umd.cs.findbugs.annotations.**
+
+# Cloud Browser REAL backend (Workstream 1): SSHJ + SpongyCastle are loaded
+# reflectively (key formats, ciphers, services). Keep them whole in release.
+-keep class net.schmizz.sshj.** { *; }
+-keep class com.hierynomus.** { *; }
+-keep class com.madgag.spongycastle.** { *; }
+-keep class org.spongycastle.** { *; }
+-dontwarn net.schmizz.sshj.**
+-dontwarn com.hierynomus.**
+-dontwarn com.madgag.spongycastle.**
+-dontwarn org.spongycastle.**
+-dontwarn org.slf4j.**

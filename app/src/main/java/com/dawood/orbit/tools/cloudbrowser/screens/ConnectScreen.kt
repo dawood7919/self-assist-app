@@ -40,18 +40,22 @@ import kotlinx.coroutines.withContext
  * VPS connection form.
  *
  * Exact visual copy of mockup slot 2. Owns every field in [rememberSaveable]
- * so rotation never discards input. Validation runs through
- * [CloudBrowserEngine.validateServer] with per-field errors. [onTestConnection]
- * and [onConnect] are supplied by the tool, which calls the blocking [VpsApi]
- * directly — this screen never touches the API. Only the key *path* is kept;
- * key contents are never read or stored.
+ * so rotation never discards input — except the password, which stays in a
+ * RAM-only [remember] so it is never saved, logged, or persisted. Validation
+ * runs through [CloudBrowserEngine.validateServer] with per-field errors.
+ * [onTestConnection] and [onConnect] are supplied by the tool, which calls
+ * the blocking [VpsApi] directly — this screen never touches the API. Only
+ * the key *path* is kept; key contents are never read or stored. The
+ * password is handed to [onConnect] as a plain String; the tool copies it
+ * into EphemeralCredentials and zeroes its own copy, and this screen clears
+ * the field after a successful connect.
  */
 @Composable
 fun ConnectScreen(
     initial: SavedServer?,
     isDemo: Boolean,
     onTestConnection: (SavedServer) -> Result<Long>,
-    onConnect: (SavedServer) -> Result<Unit>,
+    onConnect: (SavedServer, String) -> Result<Unit>,
     onConnected: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -60,7 +64,7 @@ fun ConnectScreen(
     var portText by rememberSaveable { mutableStateOf(initial?.port?.toString() ?: "22") }
     var username by rememberSaveable { mutableStateOf(initial?.username.orEmpty()) }
     var keyPath by rememberSaveable { mutableStateOf(initial?.keyPath.orEmpty()) }
-    var password by rememberSaveable { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
     var authIndex by rememberSaveable { mutableIntStateOf(AuthMethod.entries.indexOf(initial?.authMethod ?: AuthMethod.SshKey)) }
     var protocolIndex by rememberSaveable { mutableIntStateOf(Protocol.entries.indexOf(initial?.protocol ?: Protocol.Ssh)) }
     var errors by remember { mutableStateOf(emptyMap<String, String>()) }
@@ -283,9 +287,12 @@ fun ConnectScreen(
                 if (!validate()) return@CloudPrimaryButton
                 val snapshot = draft()
                 scope.launch {
-                    val result = withContext(Dispatchers.IO) { onConnect(snapshot) }
+                    val result = withContext(Dispatchers.IO) { onConnect(snapshot, password) }
                     result.fold(
-                        onSuccess = { onConnected() },
+                        onSuccess = {
+                            password = ""
+                            onConnected()
+                        },
                         onFailure = { connectMessage = it.message ?: "Could not connect" },
                     )
                 }

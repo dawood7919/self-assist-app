@@ -17,6 +17,9 @@ newpipe = "v0.24.6"
 desugar = "2.1.2"
 junit = "4.13.2"
 json = "20240303"
+sshj = "0.40.0"
+spongycastle = "1.58.0.0"
+slf4jAndroid = "1.7.36"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -49,6 +52,11 @@ newpipe-extractor = { group = "com.github.TeamNewPipe.NewPipeExtractor", name = 
 desugar-jdk-libs = { group = "com.android.tools", name = "desugar_jdk_libs", version.ref = "desugar" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 json = { group = "org.json", name = "json", version.ref = "json" }
+sshj = { group = "com.hierynomus", name = "sshj", version.ref = "sshj" }
+spongycastle-prov = { group = "com.madgag.spongycastle", name = "prov", version.ref = "spongycastle" }
+spongycastle-pkix = { group = "com.madgag.spongycastle", name = "pkix", version.ref = "spongycastle" }
+spongycastle-pg = { group = "com.madgag.spongycastle", name = "pg", version.ref = "spongycastle" }
+slf4j-android = { group = "org.slf4j", name = "slf4j-android", version.ref = "slf4jAndroid" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

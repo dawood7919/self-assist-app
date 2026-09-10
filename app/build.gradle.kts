@@ -74,6 +74,11 @@ android {
             // PDFBox brings its own notices and service files, several of which
             // collide with the ones already on the packaging path.
             excludes += "/META-INF/{DEPENDENCIES,LICENSE,LICENSE.txt,NOTICE,NOTICE.txt}"
+            // SSHJ + SpongyCastle ship signed JAR metadata that collides on the
+            // packaging path and breaks release packaging.
+            excludes += "/META-INF/BCKEY.DSA"
+            excludes += "/META-INF/*.SF"
+            excludes += "/META-INF/*.RSA"
         }
     }
 }
@@ -125,6 +130,20 @@ dependencies {
     // Extracts real stream URLs from sites that sign them per session.
     // GPL-3.0, which is why the whole application is GPL-3.0 — see LICENSE.
     implementation(libs.newpipe.extractor)
+
+    // Cloud Browser REAL backend (Workstream 1): SSH transport. BouncyCastle
+    // stock artifacts are excluded here because Android ships its own stripped
+    // BC copy; crypto comes from SpongyCastle ("SC") instead, initialised in
+    // SshManager. Never add the stock BC provider.
+    implementation(libs.sshj) {
+        exclude(group = "org.bouncycastle", module = "bcprov-jdk18on")
+        exclude(group = "org.bouncycastle", module = "bcpkix-jdk18on")
+    }
+    implementation(libs.spongycastle.prov)
+    implementation(libs.spongycastle.pkix)
+    implementation(libs.spongycastle.pg)
+    implementation(libs.slf4j.android)
+
     coreLibraryDesugaring(libs.desugar.jdk.libs)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
