@@ -438,7 +438,13 @@ class SshManager(context: Context) {
         private val port: Int,
     ) : HostKeyRepository {
 
-        override fun check(host: String, key: ByteArray): Int {
+        override fun check(host: String?, key: ByteArray?): Int {
+            if (key == null) {
+                throw JSchException(
+                    "Unknown host key (SHA256:unavailable) — approve it to connect. " +
+                        "(${this.host}:${this.port})",
+                )
+            }
             val fingerprint = try {
                 sha256Base64(key)
             } catch (_: Exception) {
@@ -473,22 +479,22 @@ class SshManager(context: Context) {
             )
         }
 
-        override fun add(hostkey: HostKey, ui: UserInfo) {
+        override fun add(hostkey: HostKey?, ui: UserInfo?) {
             // Trust is explicit via HostKeyStore.trust after user approval;
             // this repository never auto-adds keys.
         }
 
-        override fun remove(host: String, type: String) {
+        override fun remove(host: String?, type: String?) {
         }
 
-        override fun remove(host: String, type: String, key: ByteArray) {
+        override fun remove(host: String?, type: String?, key: ByteArray?) {
         }
 
         override fun getKnownHostsRepositoryID(): String = "orbit-tofu"
 
         override fun getHostKey(): Array<HostKey> = emptyArray()
 
-        override fun getHostKey(host: String, type: String): Array<HostKey> = emptyArray()
+        override fun getHostKey(host: String?, type: String?): Array<HostKey> = emptyArray()
     }
 
     private fun authPrefix(server: SavedServer): String {
@@ -514,6 +520,12 @@ class SshManager(context: Context) {
             return Exception(
                 "Cannot reach ${server.host}:${server.port} — check host spelling, " +
                     "port, and that the VPS firewall allows SSH (TCP/22). " +
+                    "Detail: ${firstMessage(e)}",
+            )
+        }
+        if (isInteropNullCrash(e)) {
+            return Exception(
+                "Internal handshake error — please update the app to the latest build. " +
                     "Detail: ${firstMessage(e)}",
             )
         }
@@ -549,6 +561,20 @@ class SshManager(context: Context) {
             depth += 1
         }
         return null
+    }
+
+    private fun isInteropNullCrash(e: Throwable): Boolean {
+        var current: Throwable? = e
+        var depth = 0
+        while (current != null && depth < 12) {
+            val message = current.message ?: ""
+            if (message.contains("Parameter specified as non-null is null")) {
+                return true
+            }
+            current = current.cause
+            depth += 1
+        }
+        return false
     }
 
     private fun isTimeout(e: Throwable): Boolean {
