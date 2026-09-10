@@ -420,7 +420,7 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
                             onRename = { path ->
                                 openFileDialog(FileDialog.Rename(path), path.substringAfterLast('/'))
                             },
-                            onMove = { openFileDialog(FileDialog.Move(path), currentPath) },
+                            onMove = { openFileDialog(FileDialog.Move(it), currentPath) },
                             onDelete = { path ->
                                 scope.launch {
                                     withContext(Dispatchers.IO) { api.deleteFile(path) }

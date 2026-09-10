@@ -163,13 +163,14 @@ private fun ZoomSlider(
             )
             BoxWithConstraints(Modifier.weight(1f)) {
                 val density = LocalDensity.current
+                val sliderMaxWidth = maxWidth
                 val span = (MAX_ZOOM - MIN_ZOOM).toFloat()
                 val fraction = ((value - MIN_ZOOM) / span).coerceIn(0f, 1f)
                 val thumb = OrbitTheme.sizes.iconMd
                 val track = OrbitTheme.spacing.xs
                 val touch = OrbitTheme.sizes.minTouchTarget
                 val drag = rememberDraggableState { deltaPx ->
-                    val widthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(1f)
+                    val widthPx = with(density) { sliderMaxWidth.toPx() }.coerceAtLeast(1f)
                     val step = (deltaPx / widthPx * span).roundToInt()
                     if (step != 0) onValueChange(value + step)
                 }
@@ -199,7 +200,7 @@ private fun ZoomSlider(
                         Modifier
                             .offset {
                                 IntOffset(
-                                    (maxWidth.toPx() * fraction - thumb.toPx() / 2).roundToInt(),
+                                    (sliderMaxWidth.toPx() * fraction - thumb.toPx() / 2).roundToInt(),
                                     0,
                                 )
                             }
