@@ -37,6 +37,7 @@ import com.dawood.orbit.tools.converter.UnitConverterTool
 import com.dawood.orbit.tools.engineering.ConcreteCalculatorTool
 import com.dawood.orbit.tools.engineering.RebarCalculatorTool
 import com.dawood.orbit.tools.image.ImageTool
+import com.dawood.orbit.tools.invoicing.InvoiceTool
 import com.dawood.orbit.tools.knowledge.KnowledgeBaseTool
 import com.dawood.orbit.tools.media.MediaLibraryTool
 import com.dawood.orbit.tools.notes.NotebookTool
@@ -199,6 +200,7 @@ private fun ToolWorkspaceHost(
 
     when (tool.id) {
         ToolRegistry.Ids.NOTEBOOK -> NotebookTool(tool = tool, onBack = onBack)
+        ToolRegistry.Ids.INVOICE_STUDIO -> InvoiceTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.PDF_MERGE -> PdfMergeTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.PDF_SPLIT -> PdfSplitTool(tool = tool, onBack = onBack)
         ToolRegistry.Ids.PDF_COMPRESS -> PdfCompressTool(tool = tool, onBack = onBack)

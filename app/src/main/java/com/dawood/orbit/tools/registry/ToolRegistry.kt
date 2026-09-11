@@ -18,6 +18,7 @@ object ToolRegistry {
 
     object Categories {
         const val PRODUCTIVITY = "productivity"
+        const val BUSINESS = "business"
         const val DOCUMENTS = "documents"
         const val MEDIA = "media"
         const val ENGINEERING = "engineering"
@@ -57,6 +58,7 @@ object ToolRegistry {
         const val DOC_ANALYSIS = "doc-analysis"
         const val OCR = "ocr"
         const val CLOUD_BROWSER = "cloud-browser"
+        const val INVOICE_STUDIO = "invoice-studio"
     }
 
     val categories: List<ToolCategory> = listOf(
@@ -66,6 +68,13 @@ object ToolRegistry {
             description = "Capture, plan and keep track of your work",
             icon = OrbitIcons.Task,
             tone = OrbitTone.Accent,
+        ),
+        ToolCategory(
+            id = Categories.BUSINESS,
+            name = "Business",
+            description = "Quotes, invoices and the paperwork that gets you paid",
+            icon = OrbitIcons.RequestQuote,
+            tone = OrbitTone.Success,
         ),
         ToolCategory(
             id = Categories.DOCUMENTS,
@@ -167,6 +176,17 @@ object ToolRegistry {
             icon = OrbitIcons.Course,
             categoryId = Categories.PRODUCTIVITY,
             tags = listOf("wiki", "reference", "search"),
+            hasWorkspace = true,
+        ),
+
+        // ── Business ─────────────────────────────────────────────────────
+        Tool(
+            id = Ids.INVOICE_STUDIO,
+            name = "Invoice Studio",
+            description = "Quotes and invoices with clients, tax and PDF export",
+            icon = OrbitIcons.RequestQuote,
+            categoryId = Categories.BUSINESS,
+            tags = listOf("invoice", "quote", "billing", "vat", "pdf", "client", "payment"),
             hasWorkspace = true,
         ),
 

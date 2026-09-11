@@ -79,6 +79,7 @@ import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Print
+import androidx.compose.material.icons.outlined.RequestQuote
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Replay30
@@ -158,6 +159,7 @@ object OrbitIcons {
     val Share: ImageVector = Icons.Outlined.Share
     val Save: ImageVector = Icons.Outlined.Save
     val Print: ImageVector = Icons.Outlined.Print
+    val RequestQuote: ImageVector = Icons.Outlined.RequestQuote
     val Send: ImageVector = Icons.Outlined.Send
     val Refresh: ImageVector = Icons.Outlined.Refresh
     val Sync: ImageVector = Icons.Outlined.Sync
