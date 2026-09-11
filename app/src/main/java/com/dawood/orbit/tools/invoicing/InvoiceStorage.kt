@@ -158,12 +158,13 @@ class InvoicesRepository private constructor(context: Context) :
     override fun idOf(item: InvoiceDocument): String = item.id
 
     fun create(kind: DocumentKind): InvoiceDocument {
+        val profile = BusinessProfileStore.get(context).profile.value
         val doc = InvoiceDocument(
             number = InvoiceMath.nextNumber(items.value, kind),
             kind = kind,
-            terms = BusinessProfileStore.get(context).value.terms,
-            currency = BusinessProfileStore.get(context).value.currency,
-            taxPct = BusinessProfileStore.get(context).value.taxPct,
+            terms = profile.terms,
+            currency = profile.currency,
+            taxPct = profile.taxPct,
         )
         add(doc)
         return doc
