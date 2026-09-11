@@ -29,6 +29,21 @@ class CdpMessagesTest {
     }
 
     @Test
+    fun captureViewportCarriesClipScaleAndSurfaceFlags() {
+        val json = CdpMessages.captureViewport(7, 78, 393, 800, 2.0)
+
+        assertTrue(json.contains("\"method\":\"Page.captureScreenshot\""))
+        assertTrue(json.contains("\"format\":\"jpeg\""))
+        assertTrue(json.contains("\"quality\":78"))
+        assertTrue(json.contains("\"captureBeyondViewport\":false"))
+        assertTrue(json.contains("\"fromSurface\":true"))
+        assertTrue(json.contains("\"optimizeForSpeed\":true"))
+        assertTrue(json.contains("\"width\":393"))
+        assertTrue(json.contains("\"height\":800"))
+        assertTrue(json.contains("\"scale\":2.0"))
+    }
+
+    @Test
     fun mousePressedAndReleasedCarryButtonAndClickCount() {
         val pressed = CdpMessages.mouse(3, "mousePressed", 100.0, 200.0, button = "left", clickCount = 1)
 

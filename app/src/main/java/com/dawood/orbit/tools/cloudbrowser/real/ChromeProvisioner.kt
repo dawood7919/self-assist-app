@@ -26,18 +26,11 @@ class ChromeProvisioner(private val ssh: SshManager) {
     fun ensure(onStage: (String) -> Unit = {}): Result<Unit> {
         return try {
             if (isDevToolsUp()) {
-                // Upgrade path for nodes provisioned before the headful
-                // change: ensure Xvfb exists BEFORE accepting the running
-                // shape, otherwise an old headless Chrome (soft mobile
-                // frames) would never be relaunched headful.
-                if (!hasXvfb()) {
-                    onStage("Installing the display server for sharp mobile frames")
-                    installXvfb()
-                }
-                if (launchShapeMatches()) {
-                    onStage("Chrome is already running on the server")
-                    return Result.success(Unit)
-                }
+                // The screenshot-pump frame source renders physical-pixel
+                // frames in plain headless mode, so any already-running
+                // headless Chrome is compatible and must be left alone.
+                onStage("Chrome is already running on the server")
+                return Result.success(Unit)
             }
 
             var binary = detectBinary().getOrNull().orEmpty()
@@ -54,7 +47,6 @@ class ChromeProvisioner(private val ssh: SshManager) {
                     ),
                 )
             }
-            if (!hasXvfb()) installXvfb()
             onStage("Starting Chrome on the server")
             startChrome(binary).onFailure { return Result.failure(it) }
 
@@ -84,34 +76,6 @@ class ChromeProvisioner(private val ssh: SshManager) {
 
     private fun isDevToolsUp(): Boolean =
         ssh.exec(VERSION_PROBE, 6_000).getOrNull()?.contains("Browser", ignoreCase = true) == true
-
-    /** Xvfb binary present on the node (headful capture is available). */
-    private fun hasXvfb(): Boolean =
-        ssh.exec("command -v Xvfb >/dev/null 2>&1", 6_000).isSuccess
-
-    /**
-     * Best-effort apt install of Xvfb, bounded to ~3 min so a slow mirror can
-     * neither stall first launch nor break provisioning (startChrome falls
-     * back to headless when the binary is missing).
-     */
-    private fun installXvfb() {
-        val aptOpts = "-o Acquire::Retries=3 -o Acquire::http::Timeout=20"
-        ssh.execRoot(
-            "asroot timeout 180 apt-get $aptOpts install -y --no-install-recommends xvfb; true",
-            200_000L,
-        )
-    }
-
-    /**
-     * Whether the currently-running Chrome matches this client's preferred
-     * launch shape. When Xvfb is installed we want headful (screencast honors
-     * deviceScaleFactor there); an old headless instance must be relaunched.
-     * On nodes without Xvfb the headless fallback is accepted as-is.
-     */
-    private fun launchShapeMatches(): Boolean {
-        if (!hasXvfb()) return true
-        return ssh.exec("pgrep -f 'Xvfb :99' >/dev/null 2>&1", 6_000).isSuccess
-    }
 
     /**
      * Prints the first Chrome/Chromium binary that actually runs. Snap
@@ -157,10 +121,7 @@ class ChromeProvisioner(private val ssh: SshManager) {
         ssh.execRoot("asroot apt-get $aptOpts update -y", INSTALL_TIMEOUT_MS)
         val prereqs = ssh.execRoot(
             "asroot apt-get $aptOpts install -y --no-install-recommends " +
-                // xvfb lets Chrome run headful on the VPS: headful screencast
-                // honors deviceScaleFactor (sharp phone frames), headless does
-                // not.
-                "wget gnupg ca-certificates apt-transport-https curl xvfb",
+                "wget gnupg ca-certificates apt-transport-https curl",
             INSTALL_TIMEOUT_MS,
         )
         if (prereqs.isFailure) {
@@ -212,45 +173,24 @@ class ChromeProvisioner(private val ssh: SshManager) {
      * bash literally.
      */
     private fun startChrome(binary: String): Result<Unit> {
-        // Headful Chrome under Xvfb is preferred: Page.startScreencast only
-        // honors deviceScaleFactor in the headful compositor, so mobile
-        // frames arrive at physical-pixel sharpness. In headless mode frames
-        // are CSS-sized and get blurrily upscaled on the phone.
+        // Plain headless is sufficient: the live frame source is a
+        // Page.captureScreenshot pump whose clip.scale explicitly renders
+        // physical-pixel frames (screencast ignored deviceScaleFactor), so no
+        // virtual display is needed on the VPS.
         val script = """
             mkdir -p "${'$'}HOME/.config/orbit-chrome"
             pkill -f 'config/orbit-chrome' 2>/dev/null || true
-            pkill -f 'Xvfb :99' 2>/dev/null || true
             sleep 1
-            DISPLAY_ARG="--headless=new"
-            WIN="1280,720"
-            if command -v Xvfb >/dev/null 2>&1; then
-                Xvfb :99 -screen 0 1400x2640x24 -nolisten tcp >/tmp/orbit-xvfb.log 2>&1 &
-                for i in ${'$'}(seq 1 20); do [ -e /tmp/.X11-unix/X99 ] && break; sleep 1; done
-                # Only commit to headful when the virtual display really came
-                # up; otherwise chrome would fail to open any window.
-                if [ -e /tmp/.X11-unix/X99 ]; then
-                    DISPLAY_ARG=""
-                    WIN="1280,2607"
-                fi
-            fi
-            # --disable-backgrounding-occluded-windows + renderer-backgrounding:
-            # Xvfb has no window manager, otherwise Chrome marks the only
-            # window occluded/background and screencast answers
-            # "Not attached to an active page".
-            nohup env DISPLAY=:99 "$binary" \
-                ${'$'}DISPLAY_ARG \
+            nohup "$binary" \
+                --headless=new \
                 --remote-debugging-port=9222 \
                 --remote-debugging-address=127.0.0.1 \
                 --remote-allow-origins='*' \
                 --no-sandbox \
                 --disable-gpu \
                 --disable-dev-shm-usage \
-                --window-position=0,0 \
-                --disable-backgrounding-occluded-windows \
-                --disable-renderer-backgrounding \
-                --disable-features=CalculateNativeWinOcclusion \
                 --user-data-dir="${'$'}HOME/.config/orbit-chrome" \
-                --window-size="${'$'}WIN" \
+                --window-size="1280,720" \
                 --no-first-run \
                 --no-default-browser-check \
                 --disable-background-networking \

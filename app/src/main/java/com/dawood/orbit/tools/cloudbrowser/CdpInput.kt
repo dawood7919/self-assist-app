@@ -205,6 +205,70 @@ object CdpInput {
         }
 
     /**
+     * Target interval between request/response screenshot frames for a
+     * [quality], in milliseconds. Page.captureScreenshot is a round trip
+     * per frame (unlike the push-based screencast), so cadence stays modest
+     * and below 20 fps to leave headroom for input over the SSH tunnel.
+     */
+    fun screenshotIntervalMs(quality: Quality): Long = when (quality) {
+        Quality.Low -> 110L   // ~9 fps, poorest networks
+        Quality.Balanced -> 75L  // ~13 fps
+        Quality.High -> 55L  // ~18 fps
+        Quality.Ultra -> 45L  // ~22 fps on fast links
+    }
+
+    /**
+     * Reads width/height from the SOF marker of a JPEG byte payload without a
+     * decoder. Used to verify a screenshot actually rendered at coded
+     * resolution: some Chrome shapes silently answer captureScreenshot at
+     * CSS size (just like startScreencast), in which case the caller must
+     * fall back instead of shipping soft frames. Returns null when parsing
+     * finds no frame marker.
+     */
+    fun jpegDimensions(bytes: ByteArray): Pair<Int, Int>? {
+        if (bytes.size < 4 || bytes[0].toInt() and 0xFF != 0xFF ||
+            bytes[1].toInt() and 0xFF != 0xD8
+        ) {
+            return null
+        }
+        var i = 2
+        while (i < bytes.size - 1) {
+            if (bytes[i].toInt() and 0xFF != 0xFF) {
+                i += 1
+                continue
+            }
+            val marker = bytes[i + 1].toInt() and 0xFF
+            if (marker == 0xFF) { // padding fill byte before a marker
+                i += 1
+                continue
+            }
+            // SOF0..SOF15 except DHT/JPG/DAC carry the frame dimensions.
+            if (marker in 0xC0..0xCF && marker != 0xC4 &&
+                marker != 0xC8 && marker != 0xCC
+            ) {
+                if (i + 9 >= bytes.size) return null
+                val height = ((bytes[i + 5].toInt() and 0xFF) shl 8) or
+                    (bytes[i + 6].toInt() and 0xFF)
+                val width = ((bytes[i + 7].toInt() and 0xFF) shl 8) or
+                    (bytes[i + 8].toInt() and 0xFF)
+                return if (width > 0 && height > 0) Pair(width, height) else null
+            }
+            val standalone = marker == 0xD8 || marker == 0xD9 ||
+                marker == 0x01 || marker in 0xD0..0xD7
+            if (standalone) {
+                i += 2
+            } else {
+                if (i + 3 >= bytes.size) return null
+                val length = ((bytes[i + 2].toInt() and 0xFF) shl 8) or
+                    (bytes[i + 3].toInt() and 0xFF)
+                if (length < 2) return null
+                i += 2 + length
+            }
+        }
+        return null
+    }
+
+    /**
      * Maps a touch fraction (0..1 of the displayed frame) to REMOTE CSS
      * coordinates inside the emulated viewport. [cssW]/[cssH] are the
      * emulated CSS dimensions; [scale] is the current pinch page-scale (1.0

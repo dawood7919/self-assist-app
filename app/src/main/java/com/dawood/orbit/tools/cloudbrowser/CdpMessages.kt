@@ -68,6 +68,42 @@ object CdpMessages {
                 .put("quality", quality),
         )
 
+    /**
+     * One live viewport screenshot for the frame pump. Unlike
+     * Page.startScreencast (which ignores deviceScaleFactor), screenshots
+     * honor the emulated device scale, so frames arrive at physical-pixel
+     * resolution. The clip covers the CSS viewport at [cssW] x [cssH] and
+     * [scale] (= coded/physical width over CSS width) applies the DSF and
+     * the bandwidth downscale in one step; [captureBeyondViewport] = false
+     * keeps the capture to what the user can see, like a screencast frame.
+     */
+    fun captureViewport(
+        id: Int,
+        quality: Int,
+        cssW: Int,
+        cssH: Int,
+        scale: Double,
+    ): String =
+        envelope(
+            id = id,
+            method = "Page.captureScreenshot",
+            params = JSONObject()
+                .put("format", "jpeg")
+                .put("quality", quality)
+                .put("captureBeyondViewport", false)
+                .put("fromSurface", true)
+                .put("optimizeForSpeed", true)
+                .put(
+                    "clip",
+                    JSONObject()
+                        .put("x", 0)
+                        .put("y", 0)
+                        .put("width", cssW.coerceAtLeast(1))
+                        .put("height", cssH.coerceAtLeast(1))
+                        .put("scale", scale),
+                ),
+        )
+
     /** Starts the frame stream (`Page.startScreencast`). */
     fun startScreencast(id: Int, w: Int, h: Int, quality: Int, everyNth: Int): String =
         envelope(

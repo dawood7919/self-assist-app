@@ -1,6 +1,7 @@
 package com.dawood.orbit.tools.cloudbrowser
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CdpInputTest {
@@ -91,5 +92,34 @@ class CdpInputTest {
         // Triple(jpegQuality, everyNthFrame, capWidth)
         assertEquals(Triple(46, 2, 960), CdpInput.screencastTuning(Quality.Low))
         assertEquals(Triple(88, 1, 1920), CdpInput.screencastTuning(Quality.Ultra))
+    }
+
+    @Test
+    fun jpegDimensionsReadSofMarker() {
+        // Minimal JPEG container: SOI, a SOF0 (H=2, W=3, three components), EOI.
+        val jpeg = byteArrayOf(
+            0xFF.toByte(), 0xD8.toByte(),
+            0xFF.toByte(), 0xC0.toByte(), 0x00, 0x11, 0x08,
+            0x00, 0x02,
+            0x00, 0x03,
+            0x03, 0x01, 0x11, 0x02, 0x11, 0x00, 0x03, 0x11, 0x01,
+            0xFF.toByte(), 0xD9.toByte(),
+        )
+        assertEquals(Pair(3, 2), CdpInput.jpegDimensions(jpeg))
+        assertEquals(null, CdpInput.jpegDimensions(byteArrayOf(1, 2, 3, 4)))
+    }
+
+    @Test
+    fun screenshotCadenceIsOrderedAndBelowPushRate() {
+        // Request/response frames: higher quality -> shorter interval, and
+        // the fastest tier stays under 25 fps (>40 ms).
+        val low = CdpInput.screenshotIntervalMs(Quality.Low)
+        val balanced = CdpInput.screenshotIntervalMs(Quality.Balanced)
+        val high = CdpInput.screenshotIntervalMs(Quality.High)
+        val ultra = CdpInput.screenshotIntervalMs(Quality.Ultra)
+        assertTrue(low > balanced)
+        assertTrue(balanced > high)
+        assertTrue(high > ultra)
+        assertTrue(ultra >= 40L)
     }
 }

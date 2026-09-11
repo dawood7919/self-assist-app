@@ -105,6 +105,9 @@ class RealVpsApi(
     private var browserPrepared: Boolean = false
     private val live = LinkedHashMap<String, LiveSession>()
     private val tombstones = LinkedHashMap<String, BrowserSession>()
+    // One screenshot pump thread per live session (only when the remote
+    // Chrome accepts DSF-aware captureScreenshot frames).
+    private val pumps = java.util.concurrent.ConcurrentHashMap<String, CapturePump>()
     private val lastDetails = mutableMapOf<String, SessionDetails>()
     private var currentServerId: String? = null
     private var prevCpu: SshMetricsParser.CpuSample? = null
@@ -161,6 +164,9 @@ class RealVpsApi(
         // only runs inside a short window after one, because a static idle
         // page legitimately emits no frames.
         var lastMainNavAtMs: Long = 0L,
+        // When true, frames come from a request/response Page.captureScreenshot
+        // pump (DSF-aware, sharp) instead of Page.startScreencast.
+        var usingScreenshots: Boolean = false,
     ) {
         fun toRecord(): BrowserSession =
             BrowserSession(
@@ -314,6 +320,8 @@ class RealVpsApi(
                 prevNet = null
                 browserPrepared = false
             }
+            pumps.values.forEach { runCatching { it.stop() } }
+            pumps.clear()
             for (session in closing) {
                 try {
                     stopScreencastBestEffort(session.cdp)
@@ -438,6 +446,24 @@ class RealVpsApi(
                 tombstones.remove(sessionId)
                 currentServerId = serverId
             }
+            val capture = selectCapture(session)
+            if (capture.isFailure) {
+                try {
+                    chromium.closeTarget(session.localPort, session.targetId)
+                } catch (_: Exception) {
+                }
+                try {
+                    session.cdp.close()
+                } catch (_: Exception) {
+                }
+                synchronized(lock) {
+                    live.remove(sessionId)
+                    tombstones[sessionId] = session.toRecord().copy(state = SessionState.Ended)
+                }
+                return@safeCall Result.failure(
+                    capture.exceptionOrNull() ?: Exception("Could not start the frame stream."),
+                )
+            }
             Result.success(session.toRecord())
         }
 
@@ -454,7 +480,8 @@ class RealVpsApi(
                 } else {
                     Result.failure(Exception("Unknown session id: $id"))
                 }
-            if (session.state != SessionState.Paused || session.screencasting) {
+            pumps.remove(id)?.stop()
+            if (!session.usingScreenshots) {
                 val stopId = CdpMessages.nextId()
                 val stopped = session.cdp.sendAndAwait(CdpMessages.stopScreencast(stopId), stopId, IO_TIMEOUT_MS)
                 if (stopped.isFailure && session.state != SessionState.Paused) {
@@ -481,7 +508,9 @@ class RealVpsApi(
                 } else {
                     Result.failure(Exception("Unknown session id: $id"))
                 }
-            if (!session.screencasting) {
+            if (session.usingScreenshots) {
+                CapturePump(session).also { pumps[id] = it }.start()
+            } else if (!session.screencasting) {
                 val started = startScreencast(session, IO_TIMEOUT_MS)
                 if (started.isFailure) {
                     return@safeCall Result.failure(
@@ -491,7 +520,7 @@ class RealVpsApi(
             }
             synchronized(lock) {
                 session.state = SessionState.Active
-                session.screencasting = true
+                session.screencasting = !session.usingScreenshots
                 session.lastSeenEpochMs = System.currentTimeMillis()
             }
             Result.success(Unit)
@@ -512,6 +541,7 @@ class RealVpsApi(
                     Result.failure(Exception("Unknown session id: $id"))
                 }
             }
+            pumps.remove(id)?.stop()
             try {
                 stopScreencastBestEffort(session.cdp)
             } catch (_: Exception) {
@@ -550,7 +580,11 @@ class RealVpsApi(
                         navigated.exceptionOrNull() ?: Exception("Could not restart the session."),
                     )
                 }
-                if (!session.screencasting) {
+                if (session.usingScreenshots) {
+                    if (!pumps.containsKey(id)) {
+                        CapturePump(session).also { pumps[id] = it }.start()
+                    }
+                } else if (!session.screencasting) {
                     val started = startScreencast(session, IO_TIMEOUT_MS)
                     if (started.isFailure) {
                         return@safeCall Result.failure(
@@ -560,7 +594,7 @@ class RealVpsApi(
                 }
                 synchronized(lock) {
                     session.state = SessionState.Active
-                    session.screencasting = true
+                    session.screencasting = !session.usingScreenshots
                     session.lastSeenEpochMs = System.currentTimeMillis()
                 }
                 return@safeCall Result.success(Unit)
@@ -611,6 +645,7 @@ class RealVpsApi(
                 live[id] = revived
                 tombstones.remove(id)
             }
+            selectCapture(revived).getOrElse { return@safeCall Result.failure(it) }
             Result.success(Unit)
         }
 
@@ -1337,26 +1372,35 @@ class RealVpsApi(
             rejectOnMain<Unit>()?.let { return@safeCall it }
             val session = liveOf(sessionId)
                 ?: return@safeCall Result.failure(unknownSession(sessionId))
-            try {
-                stopScreencastBestEffort(session.cdp)
-            } catch (_: Exception) {
-            }
-            val restarted = startScreencastOn(
-                session.cdp,
-                quality,
-                frameRate,
-                session.width,
-                session.height,
-                IO_TIMEOUT_MS,
-            )
-            if (restarted.isFailure) {
-                return@safeCall Result.failure(restarted.exceptionOrNull() ?: Exception("Could not retune the stream"))
-            }
             synchronized(lock) {
                 session.quality = quality
                 session.frameRate = frameRate
-                session.screencasting = true
                 session.state = SessionState.Active
+                if (session.usingScreenshots) {
+                    // The pump reads quality/geometry on every loop, so the new
+                    // preset takes effect without interrupting the stream.
+                    return@synchronized
+                }
+            }
+            if (!session.usingScreenshots) {
+                try {
+                    stopScreencastBestEffort(session.cdp)
+                } catch (_: Exception) {
+                }
+                val restarted = startScreencastOn(
+                    session.cdp,
+                    quality,
+                    frameRate,
+                    session.width,
+                    session.height,
+                    IO_TIMEOUT_MS,
+                )
+                if (restarted.isFailure) {
+                    return@safeCall Result.failure(
+                        restarted.exceptionOrNull() ?: Exception("Could not retune the stream"),
+                    )
+                }
+                synchronized(lock) { session.screencasting = true }
             }
             Result.success(Unit)
         }
@@ -1558,23 +1602,24 @@ class RealVpsApi(
         return Result.success(Unit)
     }
 
-    /** Restarts screencast with frame dims matching the new geometry. */
+    /** Restarts the frame source with dims matching the new geometry. */
     private fun restartStream(session: LiveSession, geometry: ViewportGeometry): Result<Unit> {
+        pumps.remove(session.sessionId)?.stop()
         try {
             stopScreencastBestEffort(session.cdp)
         } catch (_: Exception) {
         }
         val (frameW, frameH) = CdpInput.frameSize(geometry, session.quality)
-        val started = startScreencastOn(
-            session.cdp, session.quality, session.frameRate, frameW, frameH, IO_TIMEOUT_MS,
-        )
-        if (started.isFailure) return started
+        // Geometry must land on the session BEFORE the frame source is
+        // selected, since the pump/screencast read dims from the session.
         synchronized(lock) {
-            session.screencasting = true
+            session.cssWidth = geometry.cssWidth
+            session.cssHeight = geometry.cssHeight
+            session.deviceScaleFactor = geometry.deviceScaleFactor
             session.width = frameW
             session.height = frameH
         }
-        return Result.success(Unit)
+        return selectCapture(session)
     }
 
     /**
@@ -1584,6 +1629,7 @@ class RealVpsApi(
      * bursts of main-frame navigation events cannot queue restarts.
      */
     private fun enqueueStreamRestart(session: LiveSession) {
+        if (session.usingScreenshots) return
         val now = System.currentTimeMillis()
         if (now - session.lastStreamRestartAtMs < STREAM_RESTART_DEBOUNCE_MS) return
         session.lastStreamRestartAtMs = now
@@ -1608,9 +1654,10 @@ class RealVpsApi(
         val now = System.currentTimeMillis()
         val candidates = synchronized(lock) {
             live.values.filter {
-                it.state == SessionState.Active && it.screencasting &&
+                it.state == SessionState.Active &&
                     it.lastFrameAtMs > 0L &&
-                    now - it.lastMainNavAtMs < STREAM_WATCHDOG_WINDOW_MS &&
+                    (it.usingScreenshots ||
+                        (it.screencasting && now - it.lastMainNavAtMs < STREAM_WATCHDOG_WINDOW_MS)) &&
                     now - it.lastFrameAtMs > STREAM_STALL_MS &&
                     now - it.lastStreamRestartAtMs > STREAM_RESTART_DEBOUNCE_MS &&
                     it.stallRestarts < STREAM_RESTART_LIMIT
@@ -1730,16 +1777,10 @@ class RealVpsApi(
             cdp.close()
             return Result.failure(prepared.exceptionOrNull() ?: Exception("Could not prepare the new target."))
         }
+        // The frame source is selected AFTER the LiveSession exists (it
+        // either starts the DSF-aware screenshot pump or this screencast);
+        // openTarget only prepares the target and computes coded dims.
         val (frameW, frameH) = CdpInput.frameSize(geometry, quality)
-        val tuned = startScreencastOn(cdp, quality, frameRate, frameW, frameH, remainingMs(deadline))
-        if (tuned.isFailure) {
-            try {
-                chromium.closeTarget(localPort, target.id)
-            } catch (_: Exception) {
-            }
-            cdp.close()
-            return Result.failure(tuned.exceptionOrNull() ?: Exception("Could not start the stream."))
-        }
         return Result.success(
             OpenedTarget(
                 targetId = target.id,
@@ -1849,6 +1890,253 @@ class RealVpsApi(
             }
         }
         return Result.failure(lastFailure ?: Exception("Page.startScreencast failed."))
+    }
+
+    // ------------------------------------------------------------------
+    // Screenshot-pump frame source (DSF-aware; survives navigation)
+    // ------------------------------------------------------------------
+
+    /**
+     * Request/response frame source: a dedicated thread asks Chrome for one
+     * JPEG of the viewport every quality-dependent interval. Unlike
+     * Page.startScreencast (probe-verified to emit CSS-sized frames that
+     * ignore deviceScaleFactor in BOTH headless and Xvfb headful),
+     * Page.captureScreenshot renders at the emulated device scale, so phone
+     * frames arrive at physical-pixel sharpness. Because each frame is
+     * requested live, the stream never freezes after navigation — the issue
+     * that required screencast restarts. Falls back to screencast if capture
+     * errors repeat.
+     */
+    private inner class CapturePump(private val session: LiveSession) {
+
+        @Volatile
+        private var running = false
+        private var worker: Thread? = null
+
+        fun start() {
+            if (running) return
+            running = true
+            worker = Thread({ pumpLoop() }, "orbit-shot-${session.sessionId.takeLast(6)}").apply {
+                isDaemon = true
+                start()
+            }
+        }
+
+        fun stop() {
+            running = false
+            worker?.interrupt()
+            worker = null
+        }
+
+        private fun pumpLoop() {
+            var failures = 0
+            var lastMetaAt = 0L
+            while (running && !Thread.currentThread().isInterrupted) {
+                val startedAt = System.currentTimeMillis()
+                val geometry = synchronized(lock) {
+                    ViewportGeometry(session.cssWidth, session.cssHeight, session.deviceScaleFactor)
+                }
+                val (frameW, frameH) = CdpInput.frameSize(geometry, session.quality)
+                val physW = Math.round(geometry.cssWidth * geometry.deviceScaleFactor)
+                val scale = if (physW > 0) frameW.toDouble() / physW else 1.0
+                val (jpegQuality, _, _) = CdpInput.screencastTuning(session.quality)
+                val id = CdpMessages.nextId()
+                val reply = session.cdp.sendAndAwait(
+                    CdpMessages.captureViewport(
+                        id, jpegQuality, geometry.cssWidth, geometry.cssHeight, scale,
+                    ),
+                    id,
+                    CAPTURE_TIMEOUT_MS,
+                )
+                val data = reply.getOrNull()?.optString("data", "").orEmpty()
+                if (reply.isFailure || data.isEmpty()) {
+                    failures += 1
+                    if (failures >= CAPTURE_FAILURE_LIMIT) {
+                        // The capture path is unusable: fall back once to
+                        // screencast rather than showing a frozen viewport.
+                        fallbackToScreencast(session, frameW, frameH)
+                        return
+                    }
+                    try {
+                        Thread.sleep(300)
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        return
+                    }
+                    continue
+                }
+                failures = 0
+                val bytes = try {
+                    Base64.decode(data, Base64.DEFAULT)
+                } catch (_: Exception) {
+                    continue
+                }
+                if (bytes.isNotEmpty()) {
+                    val now = System.currentTimeMillis()
+                    synchronized(lock) {
+                        session.lastFrameAtMs = now
+                        session.stallRestarts = 0
+                        if (session.width != frameW || session.height != frameH) {
+                            session.width = frameW
+                            session.height = frameH
+                        }
+                    }
+                    try {
+                        onFrame(
+                            session.sessionId,
+                            LiveFrame(
+                                bytes = bytes,
+                                deviceWidth = frameW,
+                                deviceHeight = frameH,
+                                pageScaleFactor = session.pageScale,
+                                targetId = session.targetId,
+                            ),
+                        )
+                    } catch (_: Exception) {
+                    }
+                }
+                // Pinch/scroll metadata: a cheap Runtime.evaluate a few times a
+                // second replaces screencast metadata for touch mapping.
+                if (startedAt - lastMetaAt > META_POLL_MS) {
+                    lastMetaAt = startedAt
+                    pollViewportMeta(session)
+                }
+                val elapsed = System.currentTimeMillis() - startedAt
+                val fpsCapMs = 1000L / session.frameRate.coerceIn(1, 30)
+                val targetInterval = maxOf(
+                    CdpInput.screenshotIntervalMs(session.quality), fpsCapMs,
+                )
+                val waitMs = (targetInterval - elapsed).coerceAtLeast(2L)
+                try {
+                    Thread.sleep(waitMs)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    return
+                }
+            }
+        }
+    }
+
+    /** Refreshes scale/scroll/inset/device-size values from the page itself. */
+    private fun pollViewportMeta(session: LiveSession) {
+        val id = CdpMessages.nextId()
+        val expr = "(function(){var v=window.visualViewport||{scale:1,pageLeft:0,pageTop:0,offsetTop:0};" +
+            "return JSON.stringify({s:v.scale||1,sx:(v.pageLeft!=null?v.pageLeft:window.scrollX)||0," +
+            "sy:(v.pageTop!=null?v.pageTop:window.scrollY)||0,top:v.offsetTop||0," +
+            "iw:window.innerWidth,ih:window.innerHeight});})()"
+        val result = session.cdp.sendAndAwait(
+            CdpMessages.evaluateValue(id, expr, false), id, META_TIMEOUT_MS,
+        )
+        val value = result.getOrNull()?.optString("value", "").orEmpty()
+        if (value.isBlank()) return
+        try {
+            val json = JSONObject(value)
+            synchronized(lock) {
+                session.pageScale = json.optDouble("s", 1.0).takeIf { it > 0.0 } ?: 1.0
+                session.scrollX = json.optDouble("sx", 0.0)
+                session.scrollY = json.optDouble("sy", 0.0)
+                session.offsetTop = json.optDouble("top", 0.0)
+                val iw = json.optInt("iw", 0)
+                val ih = json.optInt("ih", 0)
+                if (iw > 0 && ih > 0) {
+                    session.cssWidth = iw
+                    session.cssHeight = ih
+                }
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun fallbackToScreencast(session: LiveSession, frameW: Int, frameH: Int) {
+        val started = startScreencastOn(
+            session.cdp, session.quality, session.frameRate, frameW, frameH, IO_TIMEOUT_MS,
+        )
+        if (started.isSuccess) {
+            synchronized(lock) {
+                session.usingScreenshots = false
+                session.screencasting = true
+                pumps.remove(session.sessionId)
+            }
+        }
+    }
+
+    /**
+     * Chooses the live frame source for [session]: tries one DSF-aware
+     * screenshot first (and starts its pump on success); otherwise starts
+     * the legacy push screencast. Stopping any previous source first makes
+     * this safe to call again after a geometry/quality/mode change.
+     */
+    private fun selectCapture(session: LiveSession): Result<Unit> {
+        pumps.remove(session.sessionId)?.stop()
+        stopScreencastBestEffort(session.cdp)
+        val geometry = synchronized(lock) {
+            ViewportGeometry(session.cssWidth, session.cssHeight, session.deviceScaleFactor)
+        }
+        val (frameW, frameH) = CdpInput.frameSize(geometry, session.quality)
+        val physW = Math.round(geometry.cssWidth * geometry.deviceScaleFactor)
+        val scale = if (physW > 0) frameW.toDouble() / physW else 1.0
+        val (jpegQuality, _, _) = CdpInput.screencastTuning(session.quality)
+        val probeId = CdpMessages.nextId()
+        val probe = session.cdp.sendAndAwait(
+            CdpMessages.captureViewport(
+                probeId, jpegQuality, geometry.cssWidth, geometry.cssHeight, scale,
+            ),
+            probeId,
+            CAPTURE_TIMEOUT_MS,
+        )
+        val data = probe.getOrNull()?.optString("data", "").orEmpty()
+        if (probe.isSuccess && data.isNotEmpty()) {
+            val bytes = try {
+                Base64.decode(data, Base64.DEFAULT)
+            } catch (_: Exception) {
+                ByteArray(0)
+            }
+            // Accept the pump only when the reply really rendered at the
+            // coded (physical) width; a soft CSS-sized answer means this
+            // Chrome shape ignores the scale — fall back to screencast.
+            val dims = CdpInput.jpegDimensions(bytes)
+            val sharpEnough = dims != null && dims.first >= frameW - 2
+            if (bytes.isNotEmpty() && sharpEnough) {
+                synchronized(lock) {
+                    session.usingScreenshots = true
+                    session.screencasting = false
+                    session.width = frameW
+                    session.height = frameH
+                    session.lastFrameAtMs = System.currentTimeMillis()
+                    session.stallRestarts = 0
+                }
+                try {
+                    onFrame(
+                        session.sessionId,
+                        LiveFrame(
+                            bytes = bytes,
+                            deviceWidth = frameW,
+                            deviceHeight = frameH,
+                            pageScaleFactor = session.pageScale,
+                            targetId = session.targetId,
+                        ),
+                    )
+                } catch (_: Exception) {
+                }
+                CapturePump(session).also { pumps[session.sessionId] = it }.start()
+                return Result.success(Unit)
+            }
+        }
+        // Fallback: legacy screencast (CSS-sized but always present).
+        val started = startScreencastOn(
+            session.cdp, session.quality, session.frameRate, frameW, frameH, IO_TIMEOUT_MS,
+        )
+        return if (started.isSuccess) {
+            synchronized(lock) {
+                session.usingScreenshots = false
+                session.screencasting = true
+                session.width = frameW
+                session.height = frameH
+            }
+            Result.success(Unit)
+        } else {
+            Result.failure(started.exceptionOrNull() ?: Exception("No frame source could start."))
+        }
     }
 
     /**
@@ -2240,6 +2528,11 @@ class RealVpsApi(
         // Only heal stalls within this window after a main-frame navigation;
         // static idle pages emit no frames by design.
         private const val STREAM_WATCHDOG_WINDOW_MS = 30_000L
+        // Screenshot pump timing / robustness.
+        private const val CAPTURE_TIMEOUT_MS = 9_000L
+        private const val META_TIMEOUT_MS = 3_000L
+        private const val META_POLL_MS = 450L
+        private const val CAPTURE_FAILURE_LIMIT = 6
         private const val REMOTE_DEBUG_PORT = 9222
         private const val ECHO_TOKEN = "orbit-ok"
         private const val ECHO_PROBE = "echo orbit-ok"
