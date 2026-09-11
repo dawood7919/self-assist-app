@@ -100,8 +100,14 @@ jobs:
           docker run -d --name orbit-node --network host --shm-size=1g ubuntu:22.04 sleep infinity
           docker exec orbit-node bash -cex '
             export DEBIAN_FRONTEND=noninteractive
-            apt-get update
-            apt-get install -y --no-install-recommends sudo curl ca-certificates
+            OPTS="-o Acquire::Retries=5 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
+            ok=
+            for i in 1 2 3; do
+              apt-get $OPTS update && { ok=1; break; }
+              echo "apt update attempt $i failed; retrying in 10s"; sleep 10
+            done
+            [ -n "$ok" ]
+            apt-get $OPTS install -y --no-install-recommends sudo curl ca-certificates
             command -v sudo
             useradd -m -s /bin/bash -G sudo ubuntu
             echo "ubuntu:testpass123" | chpasswd
