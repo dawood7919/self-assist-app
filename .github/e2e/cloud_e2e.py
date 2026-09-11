@@ -656,6 +656,8 @@ def main():
             row = http(args.xvfb_base, "PUT", "/json/new?about:blank")
             t = Cdp(row["webSocketDebuggerUrl"], "xvfb-target")
             t.send("Page.enable", {})
+            # Headful Chrome requires the tab active before startScreencast.
+            t.send("Page.bringToFront", {})
             t.send("Network.enable", {})
             # DSF 2 keeps the headful software-rendered surface tractable
             # under Xvfb while still proving the frame scales with DSF.

@@ -1790,6 +1790,8 @@ class RealVpsApi(
         val ua = if (mobile) CdpInput.MOBILE_USER_AGENT else CdpInput.DESKTOP_USER_AGENT
         return listOf(
             { id -> pageEnableJson(id) },
+            // Headful Chrome (Xvfb) refuses screencast on a non-active tab.
+            { id -> CdpMessages.bringToFront(id) },
             { id -> CdpMessages.networkEnable(id) },
             { id ->
                 CdpMessages.setDeviceMetrics(

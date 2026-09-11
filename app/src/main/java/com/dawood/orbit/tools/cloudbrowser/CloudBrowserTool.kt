@@ -397,6 +397,29 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
         )
     }.also { prepareJob = it }
 
+    /** Copies a password into the RAM-only credential store (never logged). */
+    fun stashPassword(draft: SavedServer, password: String) {
+        if (draft.authMethod != AuthMethod.Password || password.isEmpty()) return
+        val chars = password.toCharArray()
+        try {
+            EphemeralCredentials.setPassword(draft.id, chars)
+        } finally {
+            chars.fill('\u0000')
+        }
+    }
+
+    /** Shared tail of a successful SSH connect: latency, persist, prepare. */
+    fun completeConnect(draft: SavedServer): Result<Unit> {
+        val latency = api.testConnection(draft).getOrNull()
+        latencyMs = latency
+        serverStore.upsert(draft.copy(lastLatencyMs = latency))
+        connectionState = ConnectionState.Connected
+        refreshSessions()
+        refreshMetrics()
+        ensurePrepared()
+        return Result.success(Unit)
+    }
+
     /** Opens (or reuses) the active browser session and enters the viewport. */
     fun openBrowser() {
         if (connectionState != ConnectionState.Connected || server == null) {
@@ -509,29 +532,6 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
         dialogInput = prefill
         dialogError = null
         fileDialog = dialog
-    }
-
-    /** Copies a password into the RAM-only credential store (never logged). */
-    fun stashPassword(draft: SavedServer, password: String) {
-        if (draft.authMethod != AuthMethod.Password || password.isEmpty()) return
-        val chars = password.toCharArray()
-        try {
-            EphemeralCredentials.setPassword(draft.id, chars)
-        } finally {
-            chars.fill('\u0000')
-        }
-    }
-
-    /** Shared tail of a successful SSH connect: latency, persist, prepare. */
-    fun completeConnect(draft: SavedServer): Result<Unit> {
-        val latency = api.testConnection(draft).getOrNull()
-        latencyMs = latency
-        serverStore.upsert(draft.copy(lastLatencyMs = latency))
-        connectionState = ConnectionState.Connected
-        refreshSessions()
-        refreshMetrics()
-        ensurePrepared()
-        return Result.success(Unit)
     }
 
     fun handleConnectFailure(draft: SavedServer, failure: Result<Unit>): Result<Unit> {

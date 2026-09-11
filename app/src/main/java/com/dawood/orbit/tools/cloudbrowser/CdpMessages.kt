@@ -98,6 +98,18 @@ object CdpMessages {
         )
 
     /**
+     * Activates this target's page. Required in headful Chrome (e.g. under
+     * Xvfb): without it a freshly created background tab answers
+     * `Page.startScreencast` with "Not attached to an active page".
+     */
+    fun bringToFront(id: Int): String =
+        envelope(
+            id = id,
+            method = "Page.bringToFront",
+            params = JSONObject(),
+        )
+
+    /**
      * Dispatches a mouse event (`Input.dispatchMouseEvent`).
      *
      * [type] is one of `mousePressed`, `mouseReleased`, `mouseMoved` or
