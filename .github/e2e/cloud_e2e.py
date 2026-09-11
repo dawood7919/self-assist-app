@@ -21,7 +21,7 @@ import urllib.error
 import sys
 import os
 import functools
-import http.server
+import http.server as httpserver
 import socketserver
 import tempfile
 
@@ -41,7 +41,7 @@ def start_local_site():
                 "<div style='height:6000px;width:100%;"
                 "background:linear-gradient(#fff,#036)'></div></body>")
     handler = functools.partial(
-        http.server.SimpleHTTPRequestHandler, directory=www)
+        httpserver.SimpleHTTPRequestHandler, directory=www)
     srv = socketserver.TCPServer(("127.0.0.1", 8901), handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return "http://127.0.0.1:8901/tall.html"
