@@ -1912,6 +1912,11 @@ class RealVpsApi(
         @Volatile
         private var running = false
         private var worker: Thread? = null
+        // Previous coded frame; a static page returns byte-identical JPEGs
+        // (optimizeForSpeed is deterministic), which lets the pump idle down
+        // instead of streaming the same picture at full cadence.
+        private var lastBytes: ByteArray? = null
+        private var identicalStreak = 0
 
         fun start() {
             if (running) return
@@ -1974,6 +1979,13 @@ class RealVpsApi(
                 } catch (_: Exception) {
                     continue
                 }
+                val sameAsLast = bytes.isNotEmpty() && lastBytes?.contentEquals(bytes) == true
+                if (sameAsLast) {
+                    identicalStreak += 1
+                } else {
+                    identicalStreak = 0
+                    lastBytes = bytes
+                }
                 if (bytes.isNotEmpty()) {
                     val now = System.currentTimeMillis()
                     synchronized(lock) {
@@ -1984,18 +1996,20 @@ class RealVpsApi(
                             session.height = frameH
                         }
                     }
-                    try {
-                        onFrame(
-                            session.sessionId,
-                            LiveFrame(
-                                bytes = bytes,
-                                deviceWidth = frameW,
-                                deviceHeight = frameH,
-                                pageScaleFactor = session.pageScale,
-                                targetId = session.targetId,
-                            ),
-                        )
-                    } catch (_: Exception) {
+                    if (!sameAsLast) {
+                        try {
+                            onFrame(
+                                session.sessionId,
+                                LiveFrame(
+                                    bytes = bytes,
+                                    deviceWidth = frameW,
+                                    deviceHeight = frameH,
+                                    pageScaleFactor = session.pageScale,
+                                    targetId = session.targetId,
+                                ),
+                            )
+                        } catch (_: Exception) {
+                        }
                     }
                 }
                 // Pinch/scroll metadata: a cheap Runtime.evaluate a few times a
@@ -2006,9 +2020,14 @@ class RealVpsApi(
                 }
                 val elapsed = System.currentTimeMillis() - startedAt
                 val fpsCapMs = 1000L / session.frameRate.coerceIn(1, 30)
-                val targetInterval = maxOf(
+                val activeInterval = maxOf(
                     CdpInput.screenshotIntervalMs(session.quality), fpsCapMs,
                 )
+                // Static page (two identical captures in a row): drop to a
+                // slow heartbeat to save tunnel bandwidth and VPS CPU; the
+                // first changed frame restores full cadence.
+                val targetInterval =
+                    if (identicalStreak >= 2) IDLE_INTERVAL_MS else activeInterval
                 val waitMs = (targetInterval - elapsed).coerceAtLeast(2L)
                 try {
                     Thread.sleep(waitMs)
@@ -2535,6 +2554,7 @@ class RealVpsApi(
         private const val META_TIMEOUT_MS = 3_000L
         private const val META_POLL_MS = 450L
         private const val CAPTURE_FAILURE_LIMIT = 6
+        private const val IDLE_INTERVAL_MS = 400L
         private const val REMOTE_DEBUG_PORT = 9222
         private const val ECHO_TOKEN = "orbit-ok"
         private const val ECHO_PROBE = "echo orbit-ok"

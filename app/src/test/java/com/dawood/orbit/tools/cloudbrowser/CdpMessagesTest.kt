@@ -30,7 +30,7 @@ class CdpMessagesTest {
 
     @Test
     fun captureViewportCarriesClipScaleAndSurfaceFlags() {
-        val json = CdpMessages.captureViewport(7, 78, 393, 800, 2.0)
+        val json = CdpMessages.captureViewport(7, 78, 393, 800, 1.5)
 
         assertTrue(json.contains("\"method\":\"Page.captureScreenshot\""))
         assertTrue(json.contains("\"format\":\"jpeg\""))
@@ -40,7 +40,7 @@ class CdpMessagesTest {
         assertTrue(json.contains("\"optimizeForSpeed\":true"))
         assertTrue(json.contains("\"width\":393"))
         assertTrue(json.contains("\"height\":800"))
-        assertTrue(json.contains("\"scale\":2.0"))
+        assertTrue(json.contains("\"scale\":1.5"))
     }
 
     @Test
