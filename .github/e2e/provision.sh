@@ -35,18 +35,43 @@ if curl -fsS --max-time 3 http://127.0.0.1:9222/json/version 2>/dev/null | grep 
 fi
 
 # --- find or install Chrome ------------------------------------------------
+# A timeout-bounded wrapper so a stalled mirror/key fetch fails the stage
+# (and triggers the chromium fallback) instead of hanging the whole job.
+WGET="wget -q -T 20 -t 2"
+APT_OPTS="-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
 find_chrome() {
-  command -v google-chrome-stable 2>/dev/null || command -v google-chrome 2>/dev/null \
-    || command -v chromium 2>/dev/null || command -v chromium-browser 2>/dev/null || true
+  for c in google-chrome-stable google-chrome chromium chromium-browser; do
+    p="$(command -v "$c" 2>/dev/null)" || continue
+    case "$p" in /snap/*) continue ;; esac
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 15 "$p" --version >/dev/null 2>&1 || continue
+    else
+      "$p" --version >/dev/null 2>&1 || continue
+    fi
+    echo "$p"; return 0
+  done
+  return 0
 }
 BIN="$(find_chrome)"
 if [ -z "$BIN" ]; then
   log "no Chrome found — installing Google Chrome stable"
   export DEBIAN_FRONTEND=noninteractive
-  s apt-get update -y
-  s apt-get install -y wget gnupg ca-certificates apt-transport-https curl
+  log "stage: apt-get update"
+  s apt-get $APT_OPTS update -y || log "WARN: initial apt update failed"
+  log "stage: install prerequisites"
+  if ! s apt-get $APT_OPTS install -y --no-install-recommends wget gnupg ca-certificates apt-transport-https curl; then
+    log "WARN: prerequisites failed — attempting distro chromium directly"
+    if s apt-get $APT_OPTS install -y chromium-browser || s apt-get $APT_OPTS install -y chromium; then
+      BIN="$(find_chrome)"
+    fi
+    [ -n "$BIN" ] && log "fallback chromium: $BIN"
+    if [ -z "$BIN" ]; then log "FATAL: prerequisites failed and no chromium available"; exit 1; fi
+  fi
+  if [ -z "$BIN" ]; then
   TMPKEY="$(mktemp)"
-  wget -q -O "$TMPKEY" https://dl.google.com/linux/linux_signing_key.pub
+  log "stage: fetch Google signing key"
+  $WGET -O "$TMPKEY" https://dl.google.com/linux/linux_signing_key.pub \
+    || log "WARN: signing key download failed"
   # Run the whole keyring/repo block under ONE root shell: piping the sudo
   # password via stdin makes per-command pipelines (gpg | sudo tee) lose the
   # key data, since sudo consumes stdin for the password.
@@ -62,12 +87,15 @@ if [ -z "$BIN" ]; then
       > /etc/apt/sources.list.d/google-chrome.list
   ' || log "WARN: Google repo setup failed"
   rm -f "$TMPKEY"
-  s apt-get update -y || log "WARN: repo update failed"
-  s apt-get install -y google-chrome-stable || {
+  log "stage: apt-get update (Google repo)"
+  s apt-get $APT_OPTS update -y || log "WARN: repo update failed"
+  log "stage: install google-chrome-stable"
+  s apt-get $APT_OPTS install -y google-chrome-stable || {
     log "google-chrome-stable failed, trying distro chromium"
-    s apt-get install -y chromium-browser || s apt-get install -y chromium
+    s apt-get $APT_OPTS install -y chromium-browser || s apt-get $APT_OPTS install -y chromium
   }
   BIN="$(find_chrome)"
+  fi
 fi
 log "browser binary: $BIN ($($BIN --version 2>/dev/null || echo unknown))"
 [ -z "$BIN" ] && { log "FATAL: Chrome could not be installed"; exit 1; }

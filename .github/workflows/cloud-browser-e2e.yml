@@ -117,12 +117,17 @@ jobs:
           docker cp .github/e2e/cloud_e2e.py orbit-node:/home/ubuntu/cloud_e2e.py
           docker exec orbit-node chown ubuntu:ubuntu /home/ubuntu/cloud_e2e.py /home/ubuntu/provision.sh
       - name: Provision (first run installs Chrome)
+        timeout-minutes: 16
         run: |
           set +e
+          # 12-minute hard ceiling INSIDE the shell: a hung stage then fails
+          # this step and prints its tail instead of cancelling the whole job
+          # at 30 minutes with no diagnostics.
           docker exec --user ubuntu -w /home/ubuntu orbit-node bash -lc \
-            'bash provision.sh testpass123' 2>&1 | tee /tmp/prov1.out
+            'timeout 720 bash provision.sh testpass123' 2>&1 | tee /tmp/prov1.out
           RC=${PIPESTATUS[0]}
-          grep '^\[provision\]' /tmp/prov1.out | while IFS= read -r line; do echo "::notice::$line"; done
+          if [ $RC -eq 124 ]; then echo "::error::provision hung past 720s"; fi
+          grep '^\[provision\]' /tmp/prov1.out | tr '\n' '~' | xargs -I{} echo "::notice::PROV1: {}"
           if [ $RC -ne 0 ]; then
             echo "::error::first provision failed (rc=$RC)"
             echo "::notice::provision output tail:"
@@ -135,9 +140,9 @@ jobs:
         run: |
           set +e
           docker exec --user ubuntu -w /home/ubuntu orbit-node bash -lc \
-            'bash provision.sh testpass123' 2>&1 | tee /tmp/prov2.out
+            'timeout 120 bash provision.sh testpass123' 2>&1 | tee /tmp/prov2.out
           RC=${PIPESTATUS[0]}
-          grep '^\[provision\]' /tmp/prov2.out | while IFS= read -r line; do echo "::notice::$line"; done
+          grep '^\[provision\]' /tmp/prov2.out | tr '\n' '~' | xargs -I{} echo "::notice::PROV2: {}"
           exit $RC
       - name: Install probe deps in container
         run: |

@@ -107,17 +107,18 @@ class ChromeProvisioner(private val ssh: SshManager) {
     }
 
     private fun installChrome(): Result<Unit> {
-        val update = ssh.execRoot("asroot apt-get update -y", INSTALL_TIMEOUT_MS)
-        if (update.isFailure) {
-            return Result.failure(
-                Exception(
-                    "Could not update package lists on the server: " +
-                        update.exceptionOrNull()?.message,
-                ),
-            )
-        }
+        // Bounded network options mirror .github/e2e/provision.sh: a stalled
+        // mirror must fail the stage (and fall through to distro chromium)
+        // instead of hanging the SSH channel until the user sees a timeout.
+        val aptOpts = "-o Acquire::Retries=3 " +
+            "-o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
+        // Best-effort: a stale/unreachable initial mirror is not fatal —
+        // the Google repo and the distro-chromium fallback each re-run the
+        // update path and bring their own diagnostics.
+        ssh.execRoot("asroot apt-get $aptOpts update -y", INSTALL_TIMEOUT_MS)
         val prereqs = ssh.execRoot(
-            "asroot apt-get install -y wget gnupg ca-certificates apt-transport-https curl",
+            "asroot apt-get $aptOpts install -y --no-install-recommends " +
+                "wget gnupg ca-certificates apt-transport-https curl",
             INSTALL_TIMEOUT_MS,
         )
         if (prereqs.isFailure) {
@@ -127,8 +128,9 @@ class ChromeProvisioner(private val ssh: SshManager) {
         }
         val repo = """
             set -e
+            OPTS="-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
             TMPKEY=${'$'}(mktemp)
-            wget -q -O "${'$'}TMPKEY" https://dl.google.com/linux/linux_signing_key.pub
+            wget -q -T 20 -t 2 -O "${'$'}TMPKEY" https://dl.google.com/linux/linux_signing_key.pub || exit 11
             install -d -m 755 /usr/share/keyrings
             if gpg --dearmor < "${'$'}TMPKEY" > /usr/share/keyrings/google-chrome.gpg 2>/dev/null; then :; else
                 cp "${'$'}TMPKEY" /usr/share/keyrings/google-chrome.pub
@@ -136,8 +138,8 @@ class ChromeProvisioner(private val ssh: SshManager) {
             rm -f "${'$'}TMPKEY"
             printf '%s\n' 'deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main' \
                 > /etc/apt/sources.list.d/google-chrome.list
-            apt-get update -y
-            apt-get install -y google-chrome-stable
+            apt-get ${'$'}OPTS update -y
+            apt-get ${'$'}OPTS install -y google-chrome-stable
         """.trimIndent()
         val installed = ssh.execRoot("asroot bash -c " + shellSingleQuote(repo), INSTALL_TIMEOUT_MS)
         if (installed.isSuccess && detectBinary().isSuccess) return Result.success(Unit)
@@ -145,7 +147,8 @@ class ChromeProvisioner(private val ssh: SshManager) {
         // Fallback: distro chromium (works on Debian images and Ubuntu <24.04
         // without snap restrictions).
         val fallback = ssh.execRoot(
-            "asroot apt-get install -y chromium-browser || asroot apt-get install -y chromium",
+            "asroot apt-get $aptOpts install -y chromium-browser " +
+                "|| asroot apt-get $aptOpts install -y chromium",
             INSTALL_TIMEOUT_MS,
         )
         return if (fallback.isSuccess && detectBinary().isSuccess) {
