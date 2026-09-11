@@ -149,7 +149,9 @@ object CloudSettingsCodec : JsonCodec<CloudSettings> {
             runCatching {
                 CloudSettings(
                     defaultBrowser = json.optEnum("defaultBrowser", BrowserKind.Chromium, BrowserKind.entries),
-                    defaultQuality = json.optEnum("defaultQuality", Quality.Balanced, Quality.entries),
+                    // Kept in sync with CloudSettings.defaultQuality (High):
+                    // decoding a row missing the field must equal defaults.
+                    defaultQuality = json.optEnum("defaultQuality", Quality.High, Quality.entries),
                     defaultResolution = json.optEnum("defaultResolution", Resolution.P1080, Resolution.entries),
                     defaultFrameRate = json.optInt("defaultFrameRate", 30),
                     hwAccel = json.optBoolean("hwAccel", true),

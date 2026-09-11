@@ -674,9 +674,24 @@ def main():
                        {"url": site_base + "probe.html"}, timeout=45.0)
             except Exception as e:
                 return None, f"navigate failed: {e}"
-            t.send("Page.startScreencast",
-                   {"format": "jpeg", "quality": 70, "maxWidth": 1081,
-                    "maxHeight": 2200, "everyNthFrame": 1})
+            cast_err = None
+            for attempt in range(3):
+                try:
+                    t.send("Page.stopScreencast", {}, timeout=5.0)
+                except Exception:
+                    pass
+                try:
+                    t.send("Page.bringToFront", {}, timeout=5.0)
+                    t.send("Page.startScreencast",
+                           {"format": "jpeg", "quality": 70, "maxWidth": 1081,
+                            "maxHeight": 2200, "everyNthFrame": 1}, timeout=10.0)
+                    cast_err = None
+                    break
+                except Exception as e:
+                    cast_err = str(e)[:160]
+                    time.sleep(1.5)
+            if cast_err is not None:
+                return None, f"screencast refused: {cast_err}"
             time.sleep(3.5)
             if not t.frames:
                 return None, "no frames"

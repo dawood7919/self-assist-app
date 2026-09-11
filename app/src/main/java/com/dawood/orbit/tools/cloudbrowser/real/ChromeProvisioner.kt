@@ -233,6 +233,10 @@ class ChromeProvisioner(private val ssh: SshManager) {
                     WIN="1280,2607"
                 fi
             fi
+            # --disable-backgrounding-occluded-windows + renderer-backgrounding:
+            # Xvfb has no window manager, otherwise Chrome marks the only
+            # window occluded/background and screencast answers
+            # "Not attached to an active page".
             nohup env DISPLAY=:99 "$binary" \
                 ${'$'}DISPLAY_ARG \
                 --remote-debugging-port=9222 \
@@ -241,6 +245,10 @@ class ChromeProvisioner(private val ssh: SshManager) {
                 --no-sandbox \
                 --disable-gpu \
                 --disable-dev-shm-usage \
+                --window-position=0,0 \
+                --disable-backgrounding-occluded-windows \
+                --disable-renderer-backgrounding \
+                --disable-features=CalculateNativeWinOcclusion \
                 --user-data-dir="${'$'}HOME/.config/orbit-chrome" \
                 --window-size="${'$'}WIN" \
                 --no-first-run \

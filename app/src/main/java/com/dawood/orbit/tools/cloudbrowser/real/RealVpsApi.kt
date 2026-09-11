@@ -1819,22 +1819,36 @@ class RealVpsApi(
         val (jpegQuality, everyNth, _) = CdpInput.screencastTuning(quality)
         val frameRateDivisor = frameRate.coerceIn(1, 60)
         val nth = everyNth.coerceAtLeast(30 / frameRateDivisor)
-        val startId = CdpMessages.nextId()
-        val started = cdp.sendAndAwait(
-            CdpMessages.startScreencast(
+        // Headful Chrome (Xvfb) can briefly refuse startScreencast with
+        // "Not attached to an active page" until the window is active;
+        // re-assert the tab is front and retry a couple of times.
+        var lastFailure: Throwable? = null
+        repeat(3) { attempt ->
+            if (attempt > 0) {
+                try {
+                    Thread.sleep(700)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    return Result.failure(Exception("Interrupted while starting the stream."))
+                }
+            }
+            val frontId = CdpMessages.nextId()
+            cdp.sendAndAwait(CdpMessages.bringToFront(frontId), frontId, timeoutMs.coerceAtMost(3_000L))
+            val startId = CdpMessages.nextId()
+            val started = cdp.sendAndAwait(
+                CdpMessages.startScreencast(startId, width, height, jpegQuality, nth),
                 startId,
-                width,
-                height,
-                jpegQuality,
-                nth,
-            ),
-            startId,
-            timeoutMs,
-        )
-        if (started.isFailure) {
-            return Result.failure(started.exceptionOrNull() ?: Exception("Page.startScreencast failed."))
+                timeoutMs,
+            )
+            if (started.isSuccess) return Result.success(Unit)
+            lastFailure = started.exceptionOrNull()
+            try {
+                val stopId = CdpMessages.nextId()
+                cdp.sendAndAwait(CdpMessages.stopScreencast(stopId), stopId, 1_500L)
+            } catch (_: Exception) {
+            }
         }
-        return Result.success(Unit)
+        return Result.failure(lastFailure ?: Exception("Page.startScreencast failed."))
     }
 
     /**

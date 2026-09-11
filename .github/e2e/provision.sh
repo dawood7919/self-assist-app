@@ -146,6 +146,10 @@ if command -v Xvfb >/dev/null 2>&1; then
     --remote-debugging-address=127.0.0.1 \
     --remote-allow-origins='*' \
     --no-sandbox --disable-gpu --disable-dev-shm-usage \
+    --window-position=0,0 \
+    --disable-backgrounding-occluded-windows \
+    --disable-renderer-backgrounding \
+    --disable-features=CalculateNativeWinOcclusion \
     --user-data-dir="$HOME/.config/orbit-chrome" \
     --no-first-run --no-default-browser-check \
     --disable-background-networking --disable-sync \
