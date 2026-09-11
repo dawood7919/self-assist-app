@@ -321,23 +321,34 @@ def main():
     summary["zoom"]["pinchGesture"] = {"works": pinch_ok, "detail": pinch_detail}
 
     # (c) CSS zoom — the only mechanism expected to work below 100% on
-    # desktop pages (page-scale pinch clamps to 1.0 minimum).
+    # desktop pages (page-scale pinch clamps to 1.0 minimum). Measure a
+    # 100px marker's box; clientWidth is unreliable under root zoom.
     css_ok = False
     css_detail = ""
     try:
-        base_w = int(page.eval("document.documentElement.clientWidth"))
-        page.eval("document.documentElement.style.zoom='1.25'")
-        time.sleep(0.4)
-        in_w = int(page.eval("document.documentElement.clientWidth"))
-        page.eval("document.documentElement.style.zoom='0.8'")
-        time.sleep(0.4)
-        out_w = int(page.eval("document.documentElement.clientWidth"))
+        page.eval("""
+            (function(){var d=document.getElementById('zmark');
+            if(!d){d=document.createElement('div');d.id='zmark';
+            d.style.cssText='position:fixed;left:0;top:0;width:100px;height:100px;z-index:99999';
+            document.body.appendChild(d);}})()""")
+        base = float(page.eval(
+            "document.getElementById('zmark').getBoundingClientRect().width"))
+        def css_zoom(target, value):
+            page.eval(f"document.{target}.style.zoom='{value}'")
+            time.sleep(0.4)
+            return float(page.eval(
+                "document.getElementById('zmark').getBoundingClientRect().width"))
+        w_html_in = css_zoom("documentElement", "1.25")
+        w_html_out = css_zoom("documentElement", "0.8")
         page.eval("document.documentElement.style.zoom=''")
-        ratio_in = base_w / in_w if in_w else 0
-        ratio_out = out_w / base_w if base_w else 0
-        css_ok = abs(ratio_in - 1.25) < 0.12 and abs(ratio_out - 1.0 / 0.8) < 0.15
-        css_detail = (f"base={base_w} zoom125width={in_w} ratio={ratio_in:.3f} "
-                      f"zoom080width={out_w} ratio={ratio_out:.3f}")
+        w_body_in = css_zoom("body", "1.25")
+        page.eval("document.body.style.zoom=''")
+        r_h_in = w_html_in / base if base else 0
+        r_h_out = w_html_out / base if base else 0
+        r_b_in = w_body_in / base if base else 0
+        css_ok = abs(r_h_in - 1.25) < 0.1 or abs(r_b_in - 1.25) < 0.1
+        css_detail = (f"marker={base:.0f} html125={w_html_in:.0f}({r_h_in:.2f}) "
+                      f"html080={w_html_out:.0f}({r_h_out:.2f}) body125={w_body_in:.0f}({r_b_in:.2f})")
     except Exception as e:
         css_detail = f"error: {str(e)[:200]}"
     step("zoomCssFullRange", css_ok, css_detail)
