@@ -189,7 +189,8 @@ def main():
     # 1. version ---------------------------------------------------------
     version = http(args.base, "GET", "/json/version")
     browser_ws_url = version["webSocketDebuggerUrl"]
-    step("version", "Browser" in version.get("Browser", ""), version.get("Browser", ""))
+    bv = version.get("Browser", "")
+    step("version", ("Browser" in bv) or bv.startswith("Chrome/"), bv)
 
     # 2. create target exactly like the app: about:blank via PUT, then
     # Page.navigate on the target session.
@@ -273,48 +274,107 @@ def main():
     page.eval("window.scrollTo(0,0)")
     time.sleep(0.4)
 
-    # 8. ZOOM: ctrl + wheel ----------------------------------------------
+    # 8. ZOOM: headless Chrome often ignores Ctrl+wheel/Ctrl+= browser
+    # accelerators (no browser chrome), so discover every mechanism the app
+    # could rely on and record which ones actually move visualViewport.scale.
     scale0 = float(page.eval("window.visualViewport.scale"))
-    page.send("Input.dispatchMouseEvent",
-              {"type": "mouseWheel", "x": 640, "y": 360, "deltaX": 0, "deltaY": -240,
-               "modifiers": 2})
-    time.sleep(0.8)
-    scale_wheel = float(page.eval("window.visualViewport.scale"))
-    zoom_wheel = scale_wheel > scale0 + 0.05
-    step("zoomCtrlWheel", zoom_wheel, f"{scale0} -> {scale_wheel}")
-    summary["zoom"]["ctrlWheel"] = {"from": scale0, "to": scale_wheel, "works": zoom_wheel}
 
-    # ctrl + '=' keyboard path
-    if not zoom_wheel:
-        page.send("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Control",
-                  "code": "ControlLeft", "windowsVirtualKeyCode": 17, "modifiers": 2})
-        page.send("Input.dispatchKeyEvent", {"type": "keyDown", "key": "=",
-                  "code": "Equal", "windowsVirtualKeyCode": 187, "modifiers": 2})
-        page.send("Input.dispatchKeyEvent", {"type": "keyUp", "key": "=",
-                  "code": "Equal", "windowsVirtualKeyCode": 187, "modifiers": 2})
-        page.send("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Control",
-                  "code": "ControlLeft", "windowsVirtualKeyCode": 17})
+    def vv_scale():
+        return float(page.eval("window.visualViewport.scale"))
+
+    # (a) Emulation.setPageScaleFactor — absolute pinch-style page scale.
+    psf_ok = False
+    psf_detail = ""
+    try:
+        page.send("Emulation.setPageScaleFactor", {"pageScaleFactor": 1.25})
+        time.sleep(0.6)
+        s125 = vv_scale()
+        page.send("Emulation.setPageScaleFactor", {"pageScaleFactor": 0.8})
+        time.sleep(0.6)
+        s080 = vv_scale()
+        page.send("Emulation.setPageScaleFactor", {"pageScaleFactor": 1.0})
+        time.sleep(0.4)
+        s100 = vv_scale()
+        psf_ok = abs(s125 - 1.25) < 0.03 and abs(s100 - 1.0) < 0.02
+        psf_detail = f"1.25->{s125} 0.8->{s080} 1.0->{s100}"
+    except Exception as e:
+        psf_detail = f"error: {str(e)[:200]}"
+    step("zoomSetPageScaleFactor", psf_ok, psf_detail)
+    summary["zoom"]["setPageScaleFactor"] = {"works": psf_ok, "detail": psf_detail}
+
+    # (b) Input.synthesizePinchGesture — the touch pinch gesture.
+    pinch_ok = False
+    pinch_detail = ""
+    try:
+        page.send("Input.synthesizePinchGesture",
+                  {"x": 640, "y": 360, "scaleFactor": 1.5, "relativeSpeed": 400})
         time.sleep(0.8)
-        scale_key = float(page.eval("window.visualViewport.scale"))
-        zoom_key = scale_key > scale0 + 0.05
-        step("zoomCtrlEqualKey", zoom_key, f"{scale0} -> {scale_key}")
-        summary["zoom"]["ctrlEqual"] = {"from": scale0, "to": scale_key, "works": zoom_key}
-    else:
-        step("zoomCtrlEqualKey", True, "skipped (ctrl+wheel path works)")
+        sp = vv_scale()
+        page.send("Emulation.setPageScaleFactor", {"pageScaleFactor": 1.0})
+        pinch_ok = sp > 1.35
+        pinch_detail = f"scale={sp}"
+    except Exception as e:
+        pinch_detail = f"error: {str(e)[:200]}"
+    step("zoomPinchGesture", pinch_ok, pinch_detail)
+    summary["zoom"]["pinchGesture"] = {"works": pinch_ok, "detail": pinch_detail}
+
+    # (c) CSS zoom — informational (desktop fallback).
+    css_detail = ""
+    try:
+        page.eval("document.documentElement.style.zoom='1.25'")
+        time.sleep(0.4)
+        css_detail = f"visualScale={vv_scale()} clientWidth={page.eval('document.documentElement.clientWidth')}"
+        page.eval("document.documentElement.style.zoom=''")
+    except Exception as e:
+        css_detail = f"error: {str(e)[:200]}"
+    step("zoomCssInformational", True, css_detail)
+    summary["zoom"]["css"] = css_detail
+
+    # (d) legacy browser accelerators — informational on headless; they are
+    # not part of the gating result.
+    legacy_ok = False
+    try:
+        page.send("Input.dispatchMouseEvent",
+                  {"type": "mouseWheel", "x": 640, "y": 360, "deltaX": 0,
+                   "deltaY": -240, "modifiers": 2})
+        time.sleep(0.5)
+        legacy_ok = vv_scale() > scale0 + 0.05
+        if not legacy_ok:
+            page.send("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Control",
+                      "code": "ControlLeft", "windowsVirtualKeyCode": 17, "modifiers": 2})
+            page.send("Input.dispatchKeyEvent", {"type": "keyDown", "key": "=",
+                      "code": "Equal", "windowsVirtualKeyCode": 187, "modifiers": 2})
+            page.send("Input.dispatchKeyEvent", {"type": "keyUp", "key": "=",
+                      "code": "Equal", "windowsVirtualKeyCode": 187, "modifiers": 2})
+            page.send("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Control",
+                      "code": "ControlLeft", "windowsVirtualKeyCode": 17})
+            time.sleep(0.5)
+            legacy_ok = vv_scale() > scale0 + 0.05
+        page.send("Emulation.setPageScaleFactor", {"pageScaleFactor": 1.0})
+    except Exception as e:
+        legacy_ok = False
+        css_detail = css_detail + f" legacy-error: {str(e)[:120]}"
+    step("zoomLegacyAcceleratorsInformational", True,
+         f"works={legacy_ok} (not gating on headless)")
+    summary["zoom"]["legacy"] = legacy_ok
 
     time.sleep(0.3)
     page.wait_frame(2)
     save_jpeg(args.out, "03-zoomed.jpg", page.frames[-1][1])
 
-    # reset Ctrl+0
-    page.send("Input.dispatchKeyEvent", {"type": "rawKeyDown", "key": "0",
-              "code": "Digit0", "windowsVirtualKeyCode": 48, "modifiers": 2})
-    page.send("Input.dispatchKeyEvent", {"type": "keyUp", "key": "0",
-              "code": "Digit0", "windowsVirtualKeyCode": 48, "modifiers": 2})
-    time.sleep(0.6)
-    scale_reset = float(page.eval("window.visualViewport.scale"))
-    step("zoomResetCtrl0", abs(scale_reset - 1.0) < 0.02, f"scale={scale_reset}")
+    # Reset to a known scale regardless of which mechanism the page used.
+    try:
+        page.send("Emulation.setPageScaleFactor", {"pageScaleFactor": 1.0})
+    except Exception:
+        pass
+    time.sleep(0.4)
+    scale_reset = vv_scale()
+    step("zoomResetScale", abs(scale_reset - 1.0) < 0.02, f"scale={scale_reset}")
     summary["zoom"]["resetTo"] = scale_reset
+
+    # At least one real zoom path must work, otherwise remote zoom is dead.
+    step("zoomAtLeastOneMechanism", psf_ok or pinch_ok,
+         f"setPageScaleFactor={psf_ok} pinch={pinch_ok} legacy={legacy_ok}")
 
     # 9. navigation history ----------------------------------------------
     page.send("Page.navigate", {"url": "data:text/html,<title>AAA</title><h1>A</h1>"})

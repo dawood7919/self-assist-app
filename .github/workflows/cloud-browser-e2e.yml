@@ -113,6 +113,9 @@ jobs:
           grep '^\[provision\]' /tmp/prov1.out | while IFS= read -r line; do echo "::notice::$line"; done
           if [ $RC -ne 0 ]; then
             echo "::error::first provision failed (rc=$RC)"
+            echo "::notice::provision output tail:"
+            tail -60 /tmp/prov1.out | while IFS= read -r l; do echo "::notice::$l"; done
+            echo "::notice::chrome log tail:"
             docker exec orbit-node tail -60 /tmp/orbit-chrome.log 2>/dev/null | while IFS= read -r l; do echo "::notice::$l"; done
             exit $RC
           fi

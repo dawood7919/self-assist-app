@@ -37,12 +37,21 @@ if [ -z "$BIN" ]; then
   s apt-get install -y wget gnupg ca-certificates apt-transport-https curl
   TMPKEY="$(mktemp)"
   wget -q -O "$TMPKEY" https://dl.google.com/linux/linux_signing_key.pub
-  s install -d -m 755 /usr/share/keyrings
-  cat "$TMPKEY" | gpg --dearmor 2>/dev/null | s tee /usr/share/keyrings/google-chrome.gpg >/dev/null || \
-    s cp "$TMPKEY" /usr/share/keyrings/google-chrome.pub
+  # Run the whole keyring/repo block under ONE root shell: piping the sudo
+  # password via stdin makes per-command pipelines (gpg | sudo tee) lose the
+  # key data, since sudo consumes stdin for the password.
+  s bash -c '
+    set -e
+    install -d -m 755 /usr/share/keyrings
+    if gpg --dearmor < "'"$TMPKEY"'" > /usr/share/keyrings/google-chrome.gpg 2>/dev/null; then
+      :
+    else
+      cp "'"$TMPKEY"'" /usr/share/keyrings/google-chrome.pub
+    fi
+    printf "%s\n" "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
+      > /etc/apt/sources.list.d/google-chrome.list
+  ' || log "WARN: Google repo setup failed"
   rm -f "$TMPKEY"
-  echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main' \
-    | s tee /etc/apt/sources.list.d/google-chrome.list >/dev/null
   s apt-get update -y || log "WARN: repo update failed"
   s apt-get install -y google-chrome-stable || {
     log "google-chrome-stable failed, trying distro chromium"
