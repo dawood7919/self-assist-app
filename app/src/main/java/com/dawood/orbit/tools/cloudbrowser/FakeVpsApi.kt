@@ -243,10 +243,10 @@ class FakeVpsApi : VpsApi {
         quality: Quality,
         frameRate: Int,
         timeoutSecs: Int,
-        mode: BrowserMode = BrowserMode.Mobile,
-        cssWidth: Int = 0,
-        cssHeight: Int = 0,
-        deviceScaleFactor: Double = 0.0,
+        mode: BrowserMode,
+        cssWidth: Int,
+        cssHeight: Int,
+        deviceScaleFactor: Double,
     ): Result<BrowserSession> {
         val session = BrowserSession(
             // DEMO: sequential ids keep launches deterministic across test runs.

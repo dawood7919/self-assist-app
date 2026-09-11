@@ -221,6 +221,20 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
     }
 
     /**
+     * Viewport measured from the device: physical content area (screen minus
+     * toolbar/bottom bar) plus density. The BrowserView reports exact dims
+     * once composed; this is the launch-time estimate.
+     */
+    fun launchViewport(mode: BrowserMode): ViewportGeometry {
+        val dm = context.resources.displayMetrics
+        val toolbarPx = (56f * dm.density).toInt()
+        val bottomPx = (44f * dm.density).toInt()
+        val physW = dm.widthPixels.coerceAtLeast(360)
+        val physH = (dm.heightPixels - toolbarPx - bottomPx).coerceAtLeast(640)
+        return CdpInput.emulatedViewport(physW, physH, dm.density, mode)
+    }
+
+    /**
      * Best-effort recovery of a dead browser link without user action:
      * relaunches the remote target (SSH control connection self-heals inside
      * SshManager) and returns to the last URL.
@@ -262,20 +276,6 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
                 reconnecting = false
             }
         }
-    }
-
-    /**
-     * Viewport measured from the device: physical content area (screen minus
-     * toolbar/bottom bar) plus density. The BrowserView reports exact dims
-     * once composed; this is the launch-time estimate.
-     */
-    fun launchViewport(mode: BrowserMode): ViewportGeometry {
-        val dm = context.resources.displayMetrics
-        val toolbarPx = (56f * dm.density).toInt()
-        val bottomPx = (44f * dm.density).toInt()
-        val physW = dm.widthPixels.coerceAtLeast(360)
-        val physH = (dm.heightPixels - toolbarPx - bottomPx).coerceAtLeast(640)
-        return CdpInput.emulatedViewport(physW, physH, dm.density, mode)
     }
 
     fun refreshSessions() {

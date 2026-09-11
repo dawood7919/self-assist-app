@@ -343,10 +343,10 @@ class RealVpsApi(
         quality: Quality,
         frameRate: Int,
         timeoutSecs: Int,
-        mode: BrowserMode = BrowserMode.Mobile,
-        cssWidth: Int = 0,
-        cssHeight: Int = 0,
-        deviceScaleFactor: Double = 0.0,
+        mode: BrowserMode,
+        cssWidth: Int,
+        cssHeight: Int,
+        deviceScaleFactor: Double,
     ): Result<BrowserSession> =
         safeCall {
             rejectOnMain<BrowserSession>()?.let { return@safeCall it }
@@ -399,8 +399,8 @@ class RealVpsApi(
                 cursorY = 0.5f,
             )
             if (opened.mode == BrowserMode.Mobile) {
-                session.mobilePhysW = Math.round(opened.cssWidth * opened.deviceScaleFactor)
-                session.mobilePhysH = Math.round(opened.cssHeight * opened.deviceScaleFactor)
+                session.mobilePhysW = Math.round(opened.cssWidth * opened.deviceScaleFactor).toInt()
+                session.mobilePhysH = Math.round(opened.cssHeight * opened.deviceScaleFactor).toInt()
                 session.mobileDensity = opened.deviceScaleFactor.toFloat()
             }
             synchronized(lock) {
@@ -573,8 +573,8 @@ class RealVpsApi(
                 cursorY = 0.5f,
             )
             if (opened.mode == BrowserMode.Mobile) {
-                revived.mobilePhysW = Math.round(opened.cssWidth * opened.deviceScaleFactor)
-                revived.mobilePhysH = Math.round(opened.cssHeight * opened.deviceScaleFactor)
+                revived.mobilePhysW = Math.round(opened.cssWidth * opened.deviceScaleFactor).toInt()
+                revived.mobilePhysH = Math.round(opened.cssHeight * opened.deviceScaleFactor).toInt()
                 revived.mobileDensity = opened.deviceScaleFactor.toFloat()
             }
             synchronized(lock) {
@@ -1462,8 +1462,8 @@ class RealVpsApi(
                 session.zoomPct = 100
                 session.pageScale = 1.0
                 if (mode == BrowserMode.Mobile) {
-                    session.mobilePhysW = Math.round(geometry.cssWidth * geometry.deviceScaleFactor)
-                    session.mobilePhysH = Math.round(geometry.cssHeight * geometry.deviceScaleFactor)
+                    session.mobilePhysW = Math.round(geometry.cssWidth * geometry.deviceScaleFactor).toInt()
+                    session.mobilePhysH = Math.round(geometry.cssHeight * geometry.deviceScaleFactor).toInt()
                     session.mobileDensity = geometry.deviceScaleFactor.toFloat()
                 }
             }
@@ -1498,8 +1498,8 @@ class RealVpsApi(
                 session.cssHeight = geometry.cssHeight
                 session.deviceScaleFactor = geometry.deviceScaleFactor
                 if (session.mode == BrowserMode.Mobile) {
-                    session.mobilePhysW = Math.round(geometry.cssWidth * geometry.deviceScaleFactor)
-                    session.mobilePhysH = Math.round(geometry.cssHeight * geometry.deviceScaleFactor)
+                    session.mobilePhysW = Math.round(geometry.cssWidth * geometry.deviceScaleFactor).toInt()
+                    session.mobilePhysH = Math.round(geometry.cssHeight * geometry.deviceScaleFactor).toInt()
                     session.mobileDensity = geometry.deviceScaleFactor.toFloat()
                 }
             }
