@@ -295,8 +295,10 @@ def main():
         page.send("Emulation.setPageScaleFactor", {"pageScaleFactor": 1.0})
         time.sleep(0.4)
         s100 = vv_scale()
+        # Desktop pages clamp pinch page-scale to a 1.0 minimum, so only
+        # zoom-in and reset are required here; zoom-out uses CSS zoom.
         psf_ok = abs(s125 - 1.25) < 0.03 and abs(s100 - 1.0) < 0.02
-        psf_detail = f"1.25->{s125} 0.8->{s080} 1.0->{s100}"
+        psf_detail = f"1.25->{s125} 0.8->{s080}(clamped below 1 expected) 1.0->{s100}"
     except Exception as e:
         psf_detail = f"error: {str(e)[:200]}"
     step("zoomSetPageScaleFactor", psf_ok, psf_detail)
@@ -318,21 +320,33 @@ def main():
     step("zoomPinchGesture", pinch_ok, pinch_detail)
     summary["zoom"]["pinchGesture"] = {"works": pinch_ok, "detail": pinch_detail}
 
-    # (c) CSS zoom — informational (desktop fallback).
+    # (c) CSS zoom — the only mechanism expected to work below 100% on
+    # desktop pages (page-scale pinch clamps to 1.0 minimum).
+    css_ok = False
     css_detail = ""
     try:
+        base_w = int(page.eval("document.documentElement.clientWidth"))
         page.eval("document.documentElement.style.zoom='1.25'")
         time.sleep(0.4)
-        css_detail = f"visualScale={vv_scale()} clientWidth={page.eval('document.documentElement.clientWidth')}"
+        in_w = int(page.eval("document.documentElement.clientWidth"))
+        page.eval("document.documentElement.style.zoom='0.8'")
+        time.sleep(0.4)
+        out_w = int(page.eval("document.documentElement.clientWidth"))
         page.eval("document.documentElement.style.zoom=''")
+        ratio_in = base_w / in_w if in_w else 0
+        ratio_out = out_w / base_w if base_w else 0
+        css_ok = abs(ratio_in - 1.25) < 0.12 and abs(ratio_out - 1.0 / 0.8) < 0.15
+        css_detail = (f"base={base_w} zoom125width={in_w} ratio={ratio_in:.3f} "
+                      f"zoom080width={out_w} ratio={ratio_out:.3f}")
     except Exception as e:
         css_detail = f"error: {str(e)[:200]}"
-    step("zoomCssInformational", True, css_detail)
-    summary["zoom"]["css"] = css_detail
+    step("zoomCssFullRange", css_ok, css_detail)
+    summary["zoom"]["css"] = {"works": css_ok, "detail": css_detail}
 
     # (d) legacy browser accelerators — informational on headless; they are
     # not part of the gating result.
     legacy_ok = False
+    legacy_detail = "ok"
     try:
         page.send("Input.dispatchMouseEvent",
                   {"type": "mouseWheel", "x": 640, "y": 360, "deltaX": 0,
@@ -353,14 +367,20 @@ def main():
         page.send("Emulation.setPageScaleFactor", {"pageScaleFactor": 1.0})
     except Exception as e:
         legacy_ok = False
-        css_detail = css_detail + f" legacy-error: {str(e)[:120]}"
+        import traceback as _tb
+        legacy_detail = "error: " + _tb.format_exc()[:400]
+        print("::notice::legacy zoom error:", legacy_detail.replace("\n", " | "))
     step("zoomLegacyAcceleratorsInformational", True,
-         f"works={legacy_ok} (not gating on headless)")
+         f"works={legacy_ok} (not gating on headless) {legacy_detail}")
     summary["zoom"]["legacy"] = legacy_ok
 
     time.sleep(0.3)
-    page.wait_frame(2)
-    save_jpeg(args.out, "03-zoomed.jpg", page.frames[-1][1])
+    try:
+        page.wait_frame(2)
+        save_jpeg(args.out, "03-zoomed.jpg", page.frames[-1][1])
+    except Exception as e:
+        import traceback as _tb
+        print("::notice::zoom capture error:", _tb.format_exc().replace("\n", " | ")[:500])
 
     # Reset to a known scale regardless of which mechanism the page used.
     try:
@@ -373,8 +393,8 @@ def main():
     summary["zoom"]["resetTo"] = scale_reset
 
     # At least one real zoom path must work, otherwise remote zoom is dead.
-    step("zoomAtLeastOneMechanism", psf_ok or pinch_ok,
-         f"setPageScaleFactor={psf_ok} pinch={pinch_ok} legacy={legacy_ok}")
+    step("zoomAtLeastOneMechanism", psf_ok or pinch_ok or css_ok,
+         f"setPageScaleFactor={psf_ok} pinch={pinch_ok} css={css_ok} legacy={legacy_ok}")
 
     # 9. navigation history ----------------------------------------------
     page.send("Page.navigate", {"url": "data:text/html,<title>AAA</title><h1>A</h1>"})

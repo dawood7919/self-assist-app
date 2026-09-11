@@ -70,6 +70,10 @@ jobs:
           grep -E '^\[(PASS|FAIL)\]' artifacts/runner/probe.out | while IFS= read -r line; do
             echo "::notice::$line"
           done
+          if [ $RC -ne 0 ]; then
+            echo "::error::CDP probe failed (rc=$RC) — output tail:"
+            tail -40 artifacts/runner/probe.out | while IFS= read -r line; do echo "::notice::$line"; done
+          fi
           cat artifacts/runner/summary.json 2>/dev/null | while IFS= read -r line; do echo "::notice::$line"; done
           exit $RC
       - name: Chrome log tail on failure
