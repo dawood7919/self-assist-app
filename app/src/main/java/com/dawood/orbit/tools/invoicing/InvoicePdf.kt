@@ -142,7 +142,7 @@ object InvoicePdf {
         c.y = minOf(y - 6f, ry - 8f)
     }
 
-    private fun Document.statusLabel(): String = when (kind) {
+    private fun InvoiceDocument.statusLabel(): String = when (kind) {
         DocumentKind.Quote -> if (status == DocumentStatus.Paid) "ACCEPTED" else status.label.uppercase()
         DocumentKind.Invoice -> status.label.uppercase()
     }
@@ -297,11 +297,11 @@ object InvoicePdf {
         // Paid stamp across the lower page.
         if (doc.status == DocumentStatus.Paid) {
             s.setNonStrokingColor(51, 140, 77)
-            val stamp = when (doc.kind) {
+            val stampWord = when (doc.kind) {
                 DocumentKind.Quote -> "ACCEPTED"
-                DocumentKind.Invoice -> "PAID",
+                DocumentKind.Invoice -> "PAID"
             }
-            stamp(s, stamp)
+            stamp(s, stampWord)
         }
     }
 
@@ -400,6 +400,8 @@ object InvoicePdf {
             minimumFractionDigits = 2
             maximumFractionDigits = 2
         }.format(value)
+
+    private fun money(value: Double): String = money(BigDecimal.valueOf(value))
 
     private fun trimQty(value: Double): String {
         val bd = BigDecimal(value.toString()).stripTrailingZeros()

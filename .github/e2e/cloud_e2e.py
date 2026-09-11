@@ -666,14 +666,15 @@ def main():
          f"dsfScales={shot_scales} jpeg={sw}x{sh} (informational)")
     summary["headlessScreenshot"] = [sw, sh]
 
-    # Production pump call: clip.scale (= coded width / CSS width) alone is
-    # expected to fix the output density regardless of DSF handling.
+    # Production pump call: Chrome multiplies clip.scale BY deviceScaleFactor,
+    # so a scale of 1 on the physical-size clip yields the native 1081x2200;
+    # a fraction (coded/physical) would downscale for lower quality tiers.
     clip = page.send("Page.captureScreenshot",
                      {"format": "jpeg", "quality": 78,
                       "captureBeyondViewport": False, "fromSurface": True,
                       "optimizeForSpeed": True,
                       "clip": {"x": 0, "y": 0, "width": 393, "height": 800,
-                               "scale": 1081 / 393}}, timeout=20.0)
+                               "scale": 1.0}}, timeout=20.0)
     cb = base64.b64decode(clip["data"])
     cp = os.path.join(args.out, "10-clip-headless.jpg")
     open(cp, "wb").write(cb)
@@ -741,13 +742,13 @@ def main():
             xp = os.path.join(args.out, "09-shot-xvfb.jpg")
             open(xp, "wb").write(xb)
             xw, xh = jpeg_size(xp)
-            # Production-pump call with explicit clip scale (dsf 2).
+            # Production-pump call: clip scale 1 over DSF 2 -> physical 786.
             xclip = t.send("Page.captureScreenshot",
                            {"format": "jpeg", "quality": 78,
                             "captureBeyondViewport": False, "fromSurface": True,
                             "optimizeForSpeed": True,
                             "clip": {"x": 0, "y": 0, "width": 393,
-                                     "height": 800, "scale": 2.0}}, timeout=20.0)
+                                     "height": 800, "scale": 1.0}}, timeout=20.0)
             xcb = base64.b64decode(xclip["data"])
             xcp = os.path.join(args.out, "11-clip-xvfb.jpg")
             open(xcp, "wb").write(xcb)

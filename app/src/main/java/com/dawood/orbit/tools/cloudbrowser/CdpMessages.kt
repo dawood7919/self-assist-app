@@ -70,12 +70,14 @@ object CdpMessages {
 
     /**
      * One live viewport screenshot for the frame pump. Unlike
-     * Page.startScreencast (which ignores deviceScaleFactor), screenshots
-     * honor the emulated device scale, so frames arrive at physical-pixel
-     * resolution. The clip covers the CSS viewport at [cssW] x [cssH] and
-     * [scale] (= coded/physical width over CSS width) applies the DSF and
-     * the bandwidth downscale in one step; [captureBeyondViewport] = false
-     * keeps the capture to what the user can see, like a screencast frame.
+     * Page.startScreencast (probe-verified to ignore deviceScaleFactor in
+     * both headless and Xvfb), captureScreenshot honors the emulated DSF:
+     * a bare capture returns cssW*DSF physical pixels. Chrome then
+     * MULTIPLIES clip.scale by that DSF, so [scale] must be relative to the
+     * PHYSICAL width (coded frame width over cssW*DSF): 1.0 keeps native
+     * resolution, a fraction downscales to the bandwidth cap. The clip
+     * covers the CSS viewport; captureBeyondViewport=false keeps it to the
+     * visible surface, exactly like a screencast frame.
      */
     fun captureViewport(
         id: Int,

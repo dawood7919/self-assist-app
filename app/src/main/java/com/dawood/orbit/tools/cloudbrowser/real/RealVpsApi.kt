@@ -1945,11 +1945,13 @@ class RealVpsApi(
                     ViewportGeometry(session.cssWidth, session.cssHeight, session.deviceScaleFactor)
                 }
                 val (frameW, frameH) = CdpInput.frameSize(geometry, session.quality)
-                // CDP clip scale is relative to CSS pixels and alone fixes
-                // output density (Puppeteer relies on the same): coded width
-                // over CSS width yields physical pixels even where the
-                // renderer ignores the emulated deviceScaleFactor.
-                val scale = frameW.toDouble() / geometry.cssWidth.coerceAtLeast(1)
+                // Chrome multiplies clip.scale BY the emulated deviceScaleFactor
+                // (probe-verified: scale 2.75 over DSF 2.75 produced 2973px,
+                // while a bare captureScreenshot produced the physical 1081px).
+                // Therefore scale is relative to PHYSICAL pixels: frameW/physW
+                // = 1 gives native resolution, < 1 downscales to the quality cap.
+                val physW = Math.round(geometry.cssWidth * geometry.deviceScaleFactor)
+                val scale = if (physW > 0) frameW.toDouble() / physW else 1.0
                 val (jpegQuality, _, _) = CdpInput.screencastTuning(session.quality)
                 val id = CdpMessages.nextId()
                 val reply = session.cdp.sendAndAwait(
@@ -2098,7 +2100,8 @@ class RealVpsApi(
             ViewportGeometry(session.cssWidth, session.cssHeight, session.deviceScaleFactor)
         }
         val (frameW, frameH) = CdpInput.frameSize(geometry, session.quality)
-        val scale = frameW.toDouble() / geometry.cssWidth.coerceAtLeast(1)
+        val physW = Math.round(geometry.cssWidth * geometry.deviceScaleFactor)
+        val scale = if (physW > 0) frameW.toDouble() / physW else 1.0
         val (jpegQuality, _, _) = CdpInput.screencastTuning(session.quality)
         val probeId = CdpMessages.nextId()
         val probe = session.cdp.sendAndAwait(
