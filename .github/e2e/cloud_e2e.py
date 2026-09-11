@@ -648,6 +648,24 @@ def main():
     step("headlessDsfSweep", True, f"frameSizesByDsf={sweep} (informational)")
     summary["headlessDsfSweep"] = sweep
 
+    # captureScreenshot is a request/response frame source; check whether it
+    # honors deviceScaleFactor like screencast does not.
+    page.send("Emulation.setDeviceMetricsOverride",
+              {"width": 393, "height": 800, "deviceScaleFactor": 2.75,
+               "mobile": True})
+    time.sleep(0.4)
+    shot = page.send("Page.captureScreenshot",
+                     {"format": "jpeg", "quality": 80,
+                      "captureBeyondViewport": False}, timeout=20.0)
+    sb = base64.b64decode(shot["data"])
+    sp = os.path.join(args.out, "08-shot-headless.jpg")
+    open(sp, "wb").write(sb)
+    sw, sh = jpeg_size(sp)
+    shot_scales = sw >= 900 and sh > sw
+    step("headlessCaptureScreenshotDsf", True,
+         f"dsfScales={shot_scales} jpeg={sw}x{sh} (informational)")
+    summary["headlessScreenshot"] = [sw, sh]
+
     # Headful chrome under Xvfb: deviceScaleFactor SHOULD reach the capture
     # pipeline there (full headful compositor), unlike --headless=new.
     def xvfb_probe():
@@ -699,21 +717,30 @@ def main():
             meta = t.frames[-1][2]
             fp = save_jpeg(args.out, "07-xvfb-mobile.jpg", frame)
             w, h = jpeg_size(fp)
+            xshot = t.send("Page.captureScreenshot",
+                           {"format": "jpeg", "quality": 80,
+                            "captureBeyondViewport": False}, timeout=20.0)
+            xb = base64.b64decode(xshot["data"])
+            xp = os.path.join(args.out, "09-shot-xvfb.jpg")
+            open(xp, "wb").write(xb)
+            xw, xh = jpeg_size(xp)
             env = t.eval("document.getElementById('out').textContent")
-            return (w, h, meta, json.loads(env)), None
+            return (w, h, meta, json.loads(env), [xw, xh]), None
         except Exception as e:
             return None, str(e)[:200]
 
     xvres, xverr = xvfb_probe()
     if xvres:
-        w, h, meta, env = xvres
+        w, h, meta, env, shot_dims = xvres
         # At dsf=2 a headful screencast must be ~2x the 393 CSS width.
         dsf_scales = w >= 700 and h > w
+        shot_scales = shot_dims[0] >= 700 and shot_dims[1] > shot_dims[0]
         step("xvfbMobileFrame", True,
-             f"dsfScales={dsf_scales} jpeg={w}x{h} env=iw{env.get('iw')}/dpr"
-             f"{env.get('dpr')}/touch{env.get('points')} "
-             f"meta={json.dumps(meta)[:140]} (informational)")
-        summary["xvfb"] = {"jpeg": [w, h], "env": env}
+             f"castScales={dsf_scales} jpeg={w}x{h} "
+             f"shotScales={shot_scales} shot={shot_dims[0]}x{shot_dims[1]} "
+             f"env=iw{env.get('iw')}/dpr{env.get('dpr')}/touch{env.get('points')} "
+             f"meta={json.dumps(meta)[:120]} (informational)")
+        summary["xvfb"] = {"jpeg": [w, h], "env": env, "screenshot": shot_dims}
     else:
         step("xvfbMobileFrame", True, f"skipped: {xverr}")
 
