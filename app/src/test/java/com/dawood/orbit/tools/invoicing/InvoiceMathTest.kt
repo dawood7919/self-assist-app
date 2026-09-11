@@ -121,6 +121,29 @@ class InvoiceMathTest {
     }
 
     @Test
+    fun outstandingGroupsOnlySentUnpaidInvoicesByCurrency() {
+        val sent = InvoiceDocument(
+            kind = DocumentKind.Invoice,
+            status = DocumentStatus.Sent,
+            currency = "AED",
+            items = listOf(LineItem(qty = 1.0, unitPrice = 100.0)),
+            taxPct = 0.0,
+        ) // total 100
+        val draft = sent.copy(status = DocumentStatus.Draft)
+        val paid = sent.copy(status = DocumentStatus.Paid)
+        val quote = sent.copy(kind = DocumentKind.Quote)
+        val dollars = sent.copy(
+            id = java.util.UUID.randomUUID().toString(),
+            currency = "USD",
+            items = listOf(LineItem(qty = 1.0, unitPrice = 50.0)),
+        )
+        val map = InvoiceMath.outstanding(listOf(sent, draft, paid, quote, dollars))
+        assertEquals(bd("100.00"), map["AED"])
+        assertEquals(bd("50.00"), map["USD"])
+        assertEquals(2, map.size)
+    }
+
+    @Test
     fun overdueOnlyAppliesToUnpaidInvoicesPastDueDate() {
         val now = 1_700_000_000_000L
         val invoice = doc(emptyList()).copy(dueDate = now - 86_400_000L)

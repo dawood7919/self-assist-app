@@ -108,6 +108,28 @@ object InvoiceMath {
     fun formatMoney(value: Double, currency: String): String =
         formatMoney(money(value), currency)
 
+    /**
+     * Outstanding balances per currency for invoices that were sent and are
+     * not settled (drafts are not money owed yet). Grouping by currency is
+     * what keeps the sum honest instead of adding AED to USD.
+     */
+    fun outstanding(documents: List<InvoiceDocument>): Map<String, BigDecimal> =
+        documents
+            .filter {
+                it.kind == DocumentKind.Invoice &&
+                    it.status != DocumentStatus.Paid &&
+                    it.status == DocumentStatus.Sent &&
+                    it.totals.balanceDue.signum() > 0
+            }
+            .groupBy { it.currency.uppercase() }
+            .mapValues { (_, docs) ->
+                money(docs.fold(BigDecimal.ZERO) { acc, doc -> acc + doc.totals.balanceDue })
+            }
+
+    /** Count of documents of a status, for the side-panel counters. */
+    fun countByStatus(documents: List<InvoiceDocument>, status: DocumentStatus): Int =
+        documents.count { it.status == status }
+
     fun isOverdue(doc: InvoiceDocument, now: Long): Boolean {
         if (doc.kind != DocumentKind.Invoice || doc.status == DocumentStatus.Paid) return false
         val due = doc.dueDate ?: return false

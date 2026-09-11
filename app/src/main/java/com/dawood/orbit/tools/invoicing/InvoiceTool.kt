@@ -37,6 +37,7 @@ import com.dawood.orbit.core.designsystem.component.OrbitChip
 import com.dawood.orbit.core.designsystem.component.OrbitEmptyState
 import com.dawood.orbit.core.designsystem.component.OrbitIconButton
 import com.dawood.orbit.core.designsystem.component.OrbitListItem
+import com.dawood.orbit.core.designsystem.component.OrbitMenuItem
 import com.dawood.orbit.core.designsystem.component.OrbitSectionHeader
 import com.dawood.orbit.core.designsystem.component.OrbitText
 import com.dawood.orbit.core.designsystem.component.OrbitTextField
@@ -135,7 +136,50 @@ fun InvoiceTool(
         subtitle = selected?.let { "${it.number} · ${InvoiceMath.formatMoney(it.totals.total, it.currency)}" },
         settingsTitle = "Business profile",
         settingsContent = { BusinessProfileSettings(profile, onSave = profileStore::save) },
+        menuContent = { dismiss ->
+            if (selected != null && selected.kind == DocumentKind.Quote) {
+                OrbitMenuItem(
+                    text = "Convert to invoice",
+                    icon = OrbitIcons.Swap,
+                    onClick = {
+                        val converted = invoicesRepository.duplicate(
+                            selected,
+                            DocumentKind.Invoice,
+                        )
+                        selectedId = converted.id
+                        exportedFile = null
+                        dismiss()
+                    },
+                )
+            }
+            if (selected != null) {
+                OrbitMenuItem(
+                    text = "Duplicate",
+                    icon = OrbitIcons.Copy,
+                    onClick = {
+                        val copy = invoicesRepository.duplicate(selected)
+                        selectedId = copy.id
+                        exportedFile = null
+                        dismiss()
+                    },
+                )
+            }
+        },
         panel = ToolPanel(title = "Documents", icon = OrbitIcons.Print) {
+            val outstanding = remember(documents) { InvoiceMath.outstanding(documents) }
+            if (outstanding.isNotEmpty()) {
+                ToolWorkspace(color = OrbitTheme.colors.warningSubtle) {
+                    OrbitText("Outstanding", style = OrbitTheme.typography.labelSmall,
+                        color = OrbitTheme.colors.textMuted)
+                    outstanding.forEach { (currency, amount) ->
+                        OrbitText(
+                            InvoiceMath.formatMoney(amount, currency),
+                            style = OrbitTheme.typography.h3,
+                            color = OrbitTheme.colors.warning,
+                        )
+                    }
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(OrbitTheme.spacing.xs)) {
                 OrbitButton(
                     text = "Invoice",

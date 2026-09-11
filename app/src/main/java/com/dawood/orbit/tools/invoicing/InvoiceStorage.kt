@@ -172,6 +172,30 @@ class InvoicesRepository private constructor(context: Context) :
         return doc
     }
 
+    /**
+     * Clones a document as a fresh draft of [targetKind]: new id/number, new
+     * item ids, cleared payments (a bill is never born paid). Converting an
+     * accepted quote to an invoice this way keeps the bill-to snapshot and
+     * the priced lines identical without linking the two documents.
+     */
+    fun duplicate(doc: InvoiceDocument, targetKind: DocumentKind = doc.kind): InvoiceDocument {
+        val now = System.currentTimeMillis()
+        val copy = doc.copy(
+            id = java.util.UUID.randomUUID().toString(),
+            number = InvoiceMath.nextNumber(items.value, targetKind),
+            kind = targetKind,
+            status = DocumentStatus.Draft,
+            amountPaid = if (targetKind == doc.kind) doc.amountPaid else 0.0,
+            issueDate = now,
+            dueDate = null,
+            items = doc.items.map { it.copy(id = java.util.UUID.randomUUID().toString()) },
+            createdAt = now,
+            updatedAt = now,
+        )
+        add(copy)
+        return copy
+    }
+
     fun save(doc: InvoiceDocument) = upsert(
         doc.copy(
             number = doc.number.ifBlank { InvoiceMath.nextNumber(items.value, doc.kind) },
