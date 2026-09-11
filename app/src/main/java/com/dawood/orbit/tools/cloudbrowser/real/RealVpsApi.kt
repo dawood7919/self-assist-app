@@ -1937,8 +1937,11 @@ class RealVpsApi(
                     ViewportGeometry(session.cssWidth, session.cssHeight, session.deviceScaleFactor)
                 }
                 val (frameW, frameH) = CdpInput.frameSize(geometry, session.quality)
-                val physW = Math.round(geometry.cssWidth * geometry.deviceScaleFactor)
-                val scale = if (physW > 0) frameW.toDouble() / physW else 1.0
+                // CDP clip scale is relative to CSS pixels and alone fixes
+                // output density (Puppeteer relies on the same): coded width
+                // over CSS width yields physical pixels even where the
+                // renderer ignores the emulated deviceScaleFactor.
+                val scale = frameW.toDouble() / geometry.cssWidth.coerceAtLeast(1)
                 val (jpegQuality, _, _) = CdpInput.screencastTuning(session.quality)
                 val id = CdpMessages.nextId()
                 val reply = session.cdp.sendAndAwait(
@@ -2073,8 +2076,7 @@ class RealVpsApi(
             ViewportGeometry(session.cssWidth, session.cssHeight, session.deviceScaleFactor)
         }
         val (frameW, frameH) = CdpInput.frameSize(geometry, session.quality)
-        val physW = Math.round(geometry.cssWidth * geometry.deviceScaleFactor)
-        val scale = if (physW > 0) frameW.toDouble() / physW else 1.0
+        val scale = frameW.toDouble() / geometry.cssWidth.coerceAtLeast(1)
         val (jpegQuality, _, _) = CdpInput.screencastTuning(session.quality)
         val probeId = CdpMessages.nextId()
         val probe = session.cdp.sendAndAwait(

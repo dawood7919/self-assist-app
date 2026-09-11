@@ -666,6 +666,23 @@ def main():
          f"dsfScales={shot_scales} jpeg={sw}x{sh} (informational)")
     summary["headlessScreenshot"] = [sw, sh]
 
+    # Production pump call: clip.scale (= coded width / CSS width) alone is
+    # expected to fix the output density regardless of DSF handling.
+    clip = page.send("Page.captureScreenshot",
+                     {"format": "jpeg", "quality": 78,
+                      "captureBeyondViewport": False, "fromSurface": True,
+                      "optimizeForSpeed": True,
+                      "clip": {"x": 0, "y": 0, "width": 393, "height": 800,
+                               "scale": 1081 / 393}}, timeout=20.0)
+    cb = base64.b64decode(clip["data"])
+    cp = os.path.join(args.out, "10-clip-headless.jpg")
+    open(cp, "wb").write(cb)
+    cw, ch = jpeg_size(cp)
+    clip_ok = abs(cw - 1081) <= 3 and ch > cw
+    step("headlessCaptureClipScale", clip_ok,
+         f"clipScaleSharp={clip_ok} jpeg={cw}x{ch} expected~1081x2200")
+    summary["headlessClipScreenshot"] = [cw, ch]
+
     # Headful chrome under Xvfb: deviceScaleFactor SHOULD reach the capture
     # pipeline there (full headful compositor), unlike --headless=new.
     def xvfb_probe():
@@ -724,23 +741,39 @@ def main():
             xp = os.path.join(args.out, "09-shot-xvfb.jpg")
             open(xp, "wb").write(xb)
             xw, xh = jpeg_size(xp)
+            # Production-pump call with explicit clip scale (dsf 2).
+            xclip = t.send("Page.captureScreenshot",
+                           {"format": "jpeg", "quality": 78,
+                            "captureBeyondViewport": False, "fromSurface": True,
+                            "optimizeForSpeed": True,
+                            "clip": {"x": 0, "y": 0, "width": 393,
+                                     "height": 800, "scale": 2.0}}, timeout=20.0)
+            xcb = base64.b64decode(xclip["data"])
+            xcp = os.path.join(args.out, "11-clip-xvfb.jpg")
+            open(xcp, "wb").write(xcb)
+            xcw, xch = jpeg_size(xcp)
             env = t.eval("document.getElementById('out').textContent")
-            return (w, h, meta, json.loads(env), [xw, xh]), None
+            return (w, h, meta, json.loads(env), [xw, xh], [xcw, xch]), None
         except Exception as e:
             return None, str(e)[:200]
 
     xvres, xverr = xvfb_probe()
     if xvres:
-        w, h, meta, env, shot_dims = xvres
+        w, h, meta, env, shot_dims, clip_dims = xvres
         # At dsf=2 a headful screencast must be ~2x the 393 CSS width.
         dsf_scales = w >= 700 and h > w
         shot_scales = shot_dims[0] >= 700 and shot_dims[1] > shot_dims[0]
+        clip_scales = abs(clip_dims[0] - 786) <= 3 and clip_dims[1] > clip_dims[0]
         step("xvfbMobileFrame", True,
              f"castScales={dsf_scales} jpeg={w}x{h} "
              f"shotScales={shot_scales} shot={shot_dims[0]}x{shot_dims[1]} "
+             f"clipScaleSharp={clip_scales} clip={clip_dims[0]}x{clip_dims[1]} "
              f"env=iw{env.get('iw')}/dpr{env.get('dpr')}/touch{env.get('points')} "
              f"meta={json.dumps(meta)[:120]} (informational)")
-        summary["xvfb"] = {"jpeg": [w, h], "env": env, "screenshot": shot_dims}
+        step("xvfbCaptureClipScale", clip_scales,
+             f"jpeg={clip_dims[0]}x{clip_dims[1]} expected~786x1600")
+        summary["xvfb"] = {"jpeg": [w, h], "env": env, "screenshot": shot_dims,
+                           "clip": clip_dims}
     else:
         step("xvfbMobileFrame", True, f"skipped: {xverr}")
 
