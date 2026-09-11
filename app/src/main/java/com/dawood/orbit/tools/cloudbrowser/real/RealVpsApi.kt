@@ -9,6 +9,9 @@ import android.os.Looper
 import android.provider.MediaStore
 import android.util.Base64
 import com.dawood.orbit.tools.cloudbrowser.BrowserKind
+import com.dawood.orbit.tools.cloudbrowser.BrowserMode
+import com.dawood.orbit.tools.cloudbrowser.TouchPointFraction
+import com.dawood.orbit.tools.cloudbrowser.ViewportGeometry
 import com.dawood.orbit.tools.cloudbrowser.BrowserPageEvent
 import com.dawood.orbit.tools.cloudbrowser.BrowserSession
 import com.dawood.orbit.tools.cloudbrowser.CdpEvent
@@ -107,8 +110,14 @@ class RealVpsApi(
         // Mutable: applyStream retunes these without recreating the target.
         var quality: Quality,
         var frameRate: Int,
-        val width: Int,
-        val height: Int,
+        // Coded frame size (physical px, after the quality cap).
+        var width: Int,
+        var height: Int,
+        // Emulated viewport geometry + which device the tab pretends to be.
+        var cssWidth: Int,
+        var cssHeight: Int,
+        var deviceScaleFactor: Double,
+        var mode: BrowserMode,
         val startedAtEpochMs: Long,
         var lastSeenEpochMs: Long,
         var screencasting: Boolean,
@@ -116,6 +125,16 @@ class RealVpsApi(
         var cursorY: Float,
         var zoomPct: Int = 100,
         var buttonsMask: Int = 0,
+        // Latest screencast metadata, used to map touch through pinch zoom.
+        var pageScale: Double = 1.0,
+        var scrollX: Double = 0.0,
+        var scrollY: Double = 0.0,
+        var offsetTop: Double = 0.0,
+        // Remembered phone geometry so Desktop -> Mobile restores the exact
+        // original phone viewport rather than a tablet-sized one.
+        var mobilePhysW: Int = 0,
+        var mobilePhysH: Int = 0,
+        var mobileDensity: Float = 0f,
     ) {
         fun toRecord(): BrowserSession =
             BrowserSession(
@@ -127,6 +146,7 @@ class RealVpsApi(
                 quality = quality,
                 frameRate = frameRate,
                 state = state,
+                mode = mode,
                 startedAtEpochMs = startedAtEpochMs,
                 lastSeenEpochMs = lastSeenEpochMs,
             )
@@ -139,6 +159,10 @@ class RealVpsApi(
         val cdp: CdpClient,
         val width: Int,
         val height: Int,
+        val cssWidth: Int,
+        val cssHeight: Int,
+        val deviceScaleFactor: Double,
+        val mode: BrowserMode,
     )
 
     // ------------------------------------------------------------------
@@ -319,6 +343,10 @@ class RealVpsApi(
         quality: Quality,
         frameRate: Int,
         timeoutSecs: Int,
+        mode: BrowserMode = BrowserMode.Mobile,
+        cssWidth: Int = 0,
+        cssHeight: Int = 0,
+        deviceScaleFactor: Double = 0.0,
     ): Result<BrowserSession> =
         safeCall {
             rejectOnMain<BrowserSession>()?.let { return@safeCall it }
@@ -328,7 +356,9 @@ class RealVpsApi(
                 )
             }
             if (!ssh.isConnected()) {
-                return@safeCall Result.failure(Exception("Not connected — call connect() first."))
+                return@safeCall Result.failure(
+                    Exception("The connection to the server was dropped — reconnect and try again."),
+                )
             }
             val provisioned = prepareBrowser { }
             if (provisioned.isFailure) {
@@ -336,10 +366,11 @@ class RealVpsApi(
                     provisioned.exceptionOrNull() ?: Exception("Chrome could not be prepared on the server."),
                 )
             }
+            val geometry = requestedGeometry(mode, cssWidth, cssHeight, deviceScaleFactor)
             val sessionId = UUID.randomUUID().toString()
             val deadline = System.currentTimeMillis() +
                 maxOf(LAUNCH_TIMEOUT_MS, timeoutSecs.coerceAtLeast(1) * 1_000L)
-            val opened = openTarget(sessionId, resolution, quality, frameRate, deadline)
+            val opened = openTarget(sessionId, resolution, quality, frameRate, deadline, mode, geometry)
                 .getOrElse { return@safeCall Result.failure(it) }
             val now = System.currentTimeMillis()
             val session = LiveSession(
@@ -357,12 +388,21 @@ class RealVpsApi(
                 frameRate = frameRate,
                 width = opened.width,
                 height = opened.height,
+                cssWidth = opened.cssWidth,
+                cssHeight = opened.cssHeight,
+                deviceScaleFactor = opened.deviceScaleFactor,
+                mode = opened.mode,
                 startedAtEpochMs = now,
                 lastSeenEpochMs = now,
                 screencasting = true,
                 cursorX = 0.5f,
                 cursorY = 0.5f,
             )
+            if (opened.mode == BrowserMode.Mobile) {
+                session.mobilePhysW = Math.round(opened.cssWidth * opened.deviceScaleFactor)
+                session.mobilePhysH = Math.round(opened.cssHeight * opened.deviceScaleFactor)
+                session.mobileDensity = opened.deviceScaleFactor.toFloat()
+            }
             synchronized(lock) {
                 live[sessionId] = session
                 tombstones.remove(sessionId)
@@ -501,8 +541,11 @@ class RealVpsApi(
                 return@safeCall Result.failure(Exception("Not connected — call connect() first."))
             }
             val deadline = System.currentTimeMillis() + LAUNCH_TIMEOUT_MS
-            val opened = openTarget(id, tombstone.resolution, tombstone.quality, tombstone.frameRate, deadline)
-                .getOrElse { return@safeCall Result.failure(it) }
+            val revivedGeometry = requestedGeometry(tombstone.mode, 0, 0, 0.0)
+            val opened = openTarget(
+                id, tombstone.resolution, tombstone.quality, tombstone.frameRate, deadline,
+                tombstone.mode, revivedGeometry,
+            ).getOrElse { return@safeCall Result.failure(it) }
             val now = System.currentTimeMillis()
             val revived = LiveSession(
                 sessionId = id,
@@ -519,12 +562,21 @@ class RealVpsApi(
                 frameRate = tombstone.frameRate,
                 width = opened.width,
                 height = opened.height,
+                cssWidth = opened.cssWidth,
+                cssHeight = opened.cssHeight,
+                deviceScaleFactor = opened.deviceScaleFactor,
+                mode = opened.mode,
                 startedAtEpochMs = now,
                 lastSeenEpochMs = now,
                 screencasting = true,
                 cursorX = 0.5f,
                 cursorY = 0.5f,
             )
+            if (opened.mode == BrowserMode.Mobile) {
+                revived.mobilePhysW = Math.round(opened.cssWidth * opened.deviceScaleFactor)
+                revived.mobilePhysH = Math.round(opened.cssHeight * opened.deviceScaleFactor)
+                revived.mobileDensity = opened.deviceScaleFactor.toFloat()
+            }
             synchronized(lock) {
                 live[id] = revived
                 tombstones.remove(id)
@@ -925,7 +977,10 @@ class RealVpsApi(
                     // remote zoom command switches between the two.
                     "(function(){var css=parseFloat(getComputedStyle(document.documentElement).zoom||'1');" +
                         "if(!isFinite(css))css=1;var vp=window.visualViewport?window.visualViewport.scale:1;" +
-                        "return JSON.stringify({url:location.href,title:document.title,zoom:vp*css});})()",
+                        "var ae=document.activeElement;" +
+                        "var focused=!!ae&&!/^(BODY|HTML)$/.test(ae.tagName)&&" +
+                        "(ae.tagName==='TEXTAREA'||ae.tagName==='SELECT'||ae.tagName==='INPUT'||ae.isContentEditable);" +
+                        "return JSON.stringify({url:location.href,title:document.title,zoom:vp*css,focused:focused});})()",
                 ),
                 evalId,
                 IO_TIMEOUT_MS,
@@ -1305,7 +1360,7 @@ class RealVpsApi(
     // Input internals
     // ------------------------------------------------------------------
 
-    /** Stores absolute fractions on the session and returns remote pixels. */
+    /** Stores absolute fractions on the session and returns remote CSS px. */
     private fun setCursor(session: LiveSession, fx: Float, fy: Float): Pair<Double, Double> {
         val clampedX = fx.coerceIn(0f, 1f)
         val clampedY = fy.coerceIn(0f, 1f)
@@ -1313,7 +1368,179 @@ class RealVpsApi(
             session.cursorX = clampedX
             session.cursorY = clampedY
         }
-        return CdpInput.pointFromFractions(clampedX, clampedY, session.width, session.height)
+        return cssPoint(session, clampedX, clampedY)
+    }
+
+    /** Fraction → emulated CSS coordinate, pinch-scale/scroll aware. */
+    private fun cssPoint(session: LiveSession, fx: Float, fy: Float): Pair<Double, Double> =
+        synchronized(lock) {
+            CdpInput.remoteCssPoint(
+                fx = fx,
+                fy = fy,
+                cssW = session.cssWidth,
+                cssH = session.cssHeight,
+                scale = session.pageScale,
+                scrollX = session.scrollX,
+                scrollY = session.scrollY,
+                offsetTop = session.offsetTop,
+            )
+        }
+
+    // ------------------------------------------------------------------
+    // Real touch (mobile emulation)
+    // ------------------------------------------------------------------
+
+    override fun touchStart(sessionId: String, points: List<TouchPointFraction>): Result<Unit> =
+        dispatchTouch(sessionId, "touchStart", points)
+
+    override fun touchMove(sessionId: String, points: List<TouchPointFraction>): Result<Unit> =
+        dispatchTouch(sessionId, "touchMove", points)
+
+    override fun touchEnd(sessionId: String, points: List<TouchPointFraction>): Result<Unit> =
+        dispatchTouch(sessionId, "touchEnd", points)
+
+    private fun dispatchTouch(
+        sessionId: String,
+        type: String,
+        points: List<TouchPointFraction>,
+    ): Result<Unit> = safeCall {
+        val session = liveOf(sessionId)
+            ?: return@safeCall Result.failure(unknownSession(sessionId))
+        if (points.isEmpty()) return@safeCall Result.success(Unit)
+        val mapped = points.map { p ->
+            val (x, y) = cssPoint(session, p.fx, p.fy)
+            CdpMessages.TouchPoint(p.id, x, y)
+        }
+        session.cdp.enqueue(CdpMessages.touchEvent(CdpMessages.nextId(), type, mapped))
+        touchLive(sessionId)
+        Result.success(Unit)
+    }
+
+    // ------------------------------------------------------------------
+    // Mobile / desktop mode switching and viewport re-fit
+    // ------------------------------------------------------------------
+
+    override fun setMode(sessionId: String, mode: BrowserMode): Result<Unit> =
+        safeCall {
+            rejectOnMain<Unit>()?.let { return@safeCall it }
+            val session = liveOf(sessionId)
+                ?: return@safeCall Result.failure(unknownSession(sessionId))
+            val geometry = synchronized(lock) {
+                if (mode == session.mode) {
+                    return@safeCall Result.success(Unit)
+                }
+                if (mode == BrowserMode.Mobile && session.mobilePhysW > 0) {
+                    // Restore the exact phone viewport we launched with.
+                    CdpInput.emulatedViewport(
+                        session.mobilePhysW, session.mobilePhysH,
+                        session.mobileDensity.takeIf { it > 0f } ?: 2.75f, mode,
+                    )
+                } else {
+                    // -> Desktop, or first Mobile pass with no memory: derive
+                    // from the current coded frame (== phone content box).
+                    CdpInput.emulatedViewport(
+                        session.width.coerceAtLeast(1),
+                        session.height.coerceAtLeast(1),
+                        session.mobileDensity.takeIf { it > 0f }
+                            ?: session.deviceScaleFactor.toFloat().takeIf { it > 0f }
+                            ?: 2.75f,
+                        mode,
+                    )
+                }
+            }
+            applyEmulationBundle(session, mode, geometry).getOrElse {
+                return@safeCall Result.failure(it)
+            }
+            restartStream(session, geometry).getOrElse {
+                return@safeCall Result.failure(it)
+            }
+            synchronized(lock) {
+                session.mode = mode
+                session.cssWidth = geometry.cssWidth
+                session.cssHeight = geometry.cssHeight
+                session.deviceScaleFactor = geometry.deviceScaleFactor
+                session.zoomPct = 100
+                session.pageScale = 1.0
+                if (mode == BrowserMode.Mobile) {
+                    session.mobilePhysW = Math.round(geometry.cssWidth * geometry.deviceScaleFactor)
+                    session.mobilePhysH = Math.round(geometry.cssHeight * geometry.deviceScaleFactor)
+                    session.mobileDensity = geometry.deviceScaleFactor.toFloat()
+                }
+            }
+            // UA + viewport class changes need a reload to take full effect;
+            // same target, so URL/cookies/storage all survive.
+            val reloadId = CdpMessages.nextId()
+            val reloaded = session.cdp.sendAndAwait(
+                CdpMessages.reload(reloadId, ignoreCache = false), reloadId, IO_TIMEOUT_MS,
+            )
+            if (reloaded.isFailure) {
+                return@safeCall Result.failure(
+                    reloaded.exceptionOrNull() ?: Exception("The page did not reload after the mode switch."),
+                )
+            }
+            Result.success(Unit)
+        }
+
+    override fun applyViewport(sessionId: String, geometry: ViewportGeometry): Result<Unit> =
+        safeCall {
+            rejectOnMain<Unit>()?.let { return@safeCall it }
+            val session = liveOf(sessionId)
+                ?: return@safeCall Result.failure(unknownSession(sessionId))
+            val mode = synchronized(lock) { session.mode }
+            applyEmulationBundle(session, mode, geometry).getOrElse {
+                return@safeCall Result.failure(it)
+            }
+            restartStream(session, geometry).getOrElse {
+                return@safeCall Result.failure(it)
+            }
+            synchronized(lock) {
+                session.cssWidth = geometry.cssWidth
+                session.cssHeight = geometry.cssHeight
+                session.deviceScaleFactor = geometry.deviceScaleFactor
+                if (session.mode == BrowserMode.Mobile) {
+                    session.mobilePhysW = Math.round(geometry.cssWidth * geometry.deviceScaleFactor)
+                    session.mobilePhysH = Math.round(geometry.cssHeight * geometry.deviceScaleFactor)
+                    session.mobileDensity = geometry.deviceScaleFactor.toFloat()
+                }
+            }
+            Result.success(Unit)
+        }
+
+    /** Sends the ordered device-emulation messages, awaiting each one. */
+    private fun applyEmulationBundle(
+        session: LiveSession,
+        mode: BrowserMode,
+        geometry: ViewportGeometry,
+    ): Result<Unit> {
+        for (message in emulationMessages(mode, geometry)) {
+            val id = CdpMessages.nextId()
+            val result = session.cdp.sendAndAwait(message(id), id, IO_TIMEOUT_MS)
+            if (result.isFailure) {
+                return Result.failure(
+                    result.exceptionOrNull() ?: Exception("Could not change the browser viewport."),
+                )
+            }
+        }
+        return Result.success(Unit)
+    }
+
+    /** Restarts screencast with frame dims matching the new geometry. */
+    private fun restartStream(session: LiveSession, geometry: ViewportGeometry): Result<Unit> {
+        try {
+            stopScreencastBestEffort(session.cdp)
+        } catch (_: Exception) {
+        }
+        val (frameW, frameH) = CdpInput.frameSize(geometry, session.quality)
+        val started = startScreencastOn(
+            session.cdp, session.quality, session.frameRate, frameW, frameH, IO_TIMEOUT_MS,
+        )
+        if (started.isFailure) return started
+        synchronized(lock) {
+            session.screencasting = true
+            session.width = frameW
+            session.height = frameH
+        }
+        return Result.success(Unit)
     }
 
     private inline fun sendAwait(
@@ -1351,12 +1578,33 @@ class RealVpsApi(
     // Internals
     // ------------------------------------------------------------------
 
+    /**
+     * Builds the emulated geometry for [mode]. Explicit non-zero CSS dims win
+     * (measured from the real phone content box); otherwise a phone-class
+     * default is used so a launch before first measurement still renders
+     * mobile-first.
+     */
+    private fun requestedGeometry(
+        mode: BrowserMode,
+        cssWidth: Int,
+        cssHeight: Int,
+        deviceScaleFactor: Double,
+    ): ViewportGeometry =
+        if (cssWidth > 0 && cssHeight > 0) {
+            ViewportGeometry(cssWidth, cssHeight, if (deviceScaleFactor > 0.0) deviceScaleFactor else if (mode == BrowserMode.Mobile) 3.0 else 1.0)
+        } else {
+            // Typical Android 1080x2400 panel @2.75 density as the fallback.
+            CdpInput.emulatedViewport(1080, 2200, 2.75f, mode)
+        }
+
     private fun openTarget(
         sessionId: String,
         resolution: Resolution,
         quality: Quality,
         frameRate: Int,
         deadline: Long,
+        mode: BrowserMode,
+        geometry: ViewportGeometry,
     ): Result<OpenedTarget> {
         val ready = provisioner.ensure()
         if (ready.isFailure) {
@@ -1364,8 +1612,10 @@ class RealVpsApi(
         }
         val localPort = ssh.openTunnel(REMOTE_DEBUG_PORT)
             .getOrElse { return Result.failure(it) }
-        val (width, height) = CdpInput.remoteSize(resolution)
-        val target = chromium.createTarget(localPort, "about:blank", width, height)
+        // The host WINDOW stays a wide desktop window; the emulation override
+        // (not the window) defines what sites see and what frames contain.
+        val (winW, winH) = CdpInput.remoteSize(resolution)
+        val target = chromium.createTarget(localPort, "about:blank", winW, winH)
             .getOrElse {
                 return Result.failure(it)
             }
@@ -1380,11 +1630,9 @@ class RealVpsApi(
             return Result.failure(connected.exceptionOrNull() ?: Exception("Could not reach the new target."))
         }
         cdp.setEventListener { event -> onTargetEvent(sessionId, cdp, event) }
-        // Size the remote window to the requested preset before the stream
-        // starts, so frames are coded at the real viewport, not scaled.
-        chromium.resizeWindow(localPort, target.id, width, height)
+        chromium.resizeWindow(localPort, target.id, winW, winH)
         val prepared = try {
-            prepareTarget(cdp, deadline)
+            prepareTarget(cdp, deadline, mode, geometry)
         } catch (e: Exception) {
             Result.failure(Exception(firstMessage(e)))
         }
@@ -1396,7 +1644,8 @@ class RealVpsApi(
             cdp.close()
             return Result.failure(prepared.exceptionOrNull() ?: Exception("Could not prepare the new target."))
         }
-        val tuned = startScreencastOn(cdp, quality, frameRate, width, height, remainingMs(deadline))
+        val (frameW, frameH) = CdpInput.frameSize(geometry, quality)
+        val tuned = startScreencastOn(cdp, quality, frameRate, frameW, frameH, remainingMs(deadline))
         if (tuned.isFailure) {
             try {
                 chromium.closeTarget(localPort, target.id)
@@ -1411,22 +1660,59 @@ class RealVpsApi(
                 wsUrl = target.wsUrl,
                 localPort = localPort,
                 cdp = cdp,
-                width = width,
-                height = height,
+                width = frameW,
+                height = frameH,
+                cssWidth = geometry.cssWidth,
+                cssHeight = geometry.cssHeight,
+                deviceScaleFactor = geometry.deviceScaleFactor,
+                mode = mode,
             ),
         )
     }
 
-    private fun prepareTarget(cdp: CdpClient, deadline: Long): Result<Unit> {
-        val enableId = CdpMessages.nextId()
-        val enabled = cdp.sendAndAwait(pageEnableJson(enableId), enableId, remainingMs(deadline))
-        if (enabled.isFailure) return Result.failure(enabled.exceptionOrNull() ?: Exception("Page.enable failed."))
+    /**
+     * Page.enable + Network.enable, then the device emulation bundle
+     * (viewport / scale / mobile touch / UA), then the initial blank load.
+     * Applied in this order so the very first rendered frame is already a
+     * phone-sized (or desktop) page — never a desktop page the UI then has
+     * to zoom.
+     */
+    private fun prepareTarget(
+        cdp: CdpClient,
+        deadline: Long,
+        mode: BrowserMode,
+        geometry: ViewportGeometry,
+    ): Result<Unit> {
+        for (message in emulationMessages(mode, geometry)) {
+            val id = CdpMessages.nextId()
+            val result = cdp.sendAndAwait(message(id), id, remainingMs(deadline))
+            if (result.isFailure) {
+                return Result.failure(result.exceptionOrNull() ?: Exception("Browser emulation setup failed."))
+            }
+        }
         val navId = CdpMessages.nextId()
         val navigated = cdp.sendAndAwait(CdpMessages.navigate(navId, "about:blank"), navId, remainingMs(deadline))
         if (navigated.isFailure) {
             return Result.failure(navigated.exceptionOrNull() ?: Exception("Initial navigation failed."))
         }
         return Result.success(Unit)
+    }
+
+    /** Ordered CDP messages that turn a tab into the requested device. */
+    private fun emulationMessages(mode: BrowserMode, geometry: ViewportGeometry): List<(Int) -> String> {
+        val mobile = mode == BrowserMode.Mobile
+        val ua = if (mobile) CdpInput.MOBILE_USER_AGENT else CdpInput.DESKTOP_USER_AGENT
+        return listOf(
+            { id -> pageEnableJson(id) },
+            { id -> CdpMessages.networkEnable(id) },
+            { id ->
+                CdpMessages.setDeviceMetrics(
+                    id, geometry.cssWidth, geometry.cssHeight, geometry.deviceScaleFactor, mobile,
+                )
+            },
+            { id -> CdpMessages.setTouchEmulation(id, mobile, if (mobile) 1 else 0) },
+            { id -> CdpMessages.setUserAgent(id, ua, if (mobile) "Android" else "Linux", mobile) },
+        )
     }
 
     private fun startScreencast(session: LiveSession, timeoutMs: Long): Result<Unit> =
@@ -1440,17 +1726,19 @@ class RealVpsApi(
         height: Int,
         timeoutMs: Long,
     ): Result<Unit> {
-        // Standalone tuning is Triple(maxWidth, quality, everyNthFrame); the
-        // requested frame rate is folded into the quality preset there.
-        val (maxWidth, jpegQuality, everyNth) = CdpInput.screencastParams(quality)
+        // [width]/[height] are already the quality-capped coded frame dims
+        // from CdpInput.frameSize; tuning supplies JPEG quality and cadence.
+        val (jpegQuality, everyNth, _) = CdpInput.screencastTuning(quality)
+        val frameRateDivisor = frameRate.coerceIn(1, 60)
+        val nth = everyNth.coerceAtLeast(30 / frameRateDivisor)
         val startId = CdpMessages.nextId()
         val started = cdp.sendAndAwait(
             CdpMessages.startScreencast(
                 startId,
-                minOf(maxWidth, width),
+                width,
                 height,
                 jpegQuality,
-                everyNth,
+                nth,
             ),
             startId,
             timeoutMs,
@@ -1477,6 +1765,23 @@ class RealVpsApi(
                 try {
                     cdp.enqueue(CdpMessages.screencastAck(CdpMessages.nextId(), event.sessionId))
                 } catch (_: Exception) {
+                }
+                // Mirror live viewport metrics so touch coordinates can be
+                // corrected for pinch scale and scroll before the frame is
+                // shown.
+                synchronized(live) {
+                    live[sessionId]?.let { ls ->
+                        ls.pageScale = event.pageScaleFactor.takeIf { it > 0.0 } ?: 1.0
+                        ls.scrollX = event.scrollOffsetX
+                        ls.scrollY = event.scrollOffsetY
+                        ls.offsetTop = event.offsetTop
+                        if (event.deviceWidth > 0 && event.deviceHeight > 0 &&
+                            (event.deviceWidth != ls.cssWidth || event.deviceHeight != ls.cssHeight)
+                        ) {
+                            ls.cssWidth = event.deviceWidth
+                            ls.cssHeight = event.deviceHeight
+                        }
+                    }
                 }
                 val bytes = try {
                     Base64.decode(event.dataB64, Base64.DEFAULT)

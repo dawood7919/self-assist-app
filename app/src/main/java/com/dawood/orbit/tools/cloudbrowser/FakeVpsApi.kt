@@ -243,6 +243,10 @@ class FakeVpsApi : VpsApi {
         quality: Quality,
         frameRate: Int,
         timeoutSecs: Int,
+        mode: BrowserMode = BrowserMode.Mobile,
+        cssWidth: Int = 0,
+        cssHeight: Int = 0,
+        deviceScaleFactor: Double = 0.0,
     ): Result<BrowserSession> {
         val session = BrowserSession(
             // DEMO: sequential ids keep launches deterministic across test runs.
@@ -254,12 +258,48 @@ class FakeVpsApi : VpsApi {
             quality = quality,
             frameRate = frameRate,
             state = SessionState.Active,
+            mode = mode,
             startedAtEpochMs = System.currentTimeMillis(),
             lastSeenEpochMs = System.currentTimeMillis(),
         )
         sessions.add(session)
         return Result.success(session)
     }
+
+    /** Test/UI surface: ids whose mode was last switched. */
+    val modeSwitches = mutableListOf<Pair<String, BrowserMode>>()
+
+    override fun setMode(id: String, mode: BrowserMode): Result<Unit> {
+        val session = sessions.firstOrNull { it.id == id }
+            ?: return Result.failure(IllegalArgumentException("Unknown session id: $id"))
+        replace(session.copy(mode = mode, lastSeenEpochMs = System.currentTimeMillis()))
+        modeSwitches.add(id to mode)
+        return Result.success(Unit)
+    }
+
+    override fun applyViewport(id: String, geometry: ViewportGeometry): Result<Unit> =
+        if (sessions.any { it.id == id }) Result.success(Unit)
+        else Result.failure(IllegalArgumentException("Unknown session id: $id"))
+
+    /** DEMO record of every dispatched touch sequence, for UI unit tests. */
+    val touchEvents = mutableListOf<Triple<String, String, List<TouchPointFraction>>>()
+
+    override fun touchStart(id: String, points: List<TouchPointFraction>): Result<Unit> =
+        recordTouch(id, "touchStart", points)
+
+    override fun touchMove(id: String, points: List<TouchPointFraction>): Result<Unit> =
+        recordTouch(id, "touchMove", points)
+
+    override fun touchEnd(id: String, points: List<TouchPointFraction>): Result<Unit> =
+        recordTouch(id, "touchEnd", points)
+
+    private fun recordTouch(id: String, type: String, points: List<TouchPointFraction>): Result<Unit> =
+        if (sessions.any { it.id == id }) {
+            touchEvents.add(Triple(id, type, points))
+            Result.success(Unit)
+        } else {
+            Result.failure(IllegalArgumentException("Unknown session id: $id"))
+        }
 
     override fun pauseSession(id: String): Result<Unit> {
         val session = sessions.firstOrNull { it.id == id }

@@ -121,27 +121,126 @@ object CdpInput {
         return fx to fy
     }
 
-    /** Remote desktop size in pixels for a [Resolution] preset. */
+    /**
+     * Host Chrome WINDOW size (the OS window behind the emulated viewport).
+     * The emulated phone viewport renders independently of it, but it must
+     * be at least as large as the desktop-mode CSS viewport. Kept wide.
+     */
     fun remoteSize(resolution: Resolution): Pair<Int, Int> =
         when (resolution) {
-            Resolution.P720 -> Pair(1280, 720)
-            Resolution.P1080 -> Pair(1920, 1080)
-            Resolution.P1440 -> Pair(2560, 1440)
-            Resolution.Auto -> Pair(1280, 720)
+            Resolution.P720 -> Pair(1280, 900)
+            Resolution.P1080 -> Pair(1366, 900)
+            Resolution.P1440 -> Pair(1366, 900)
+            Resolution.Auto -> Pair(1366, 900)
         }
 
     /**
-     * Screencast tuning for a [Quality] preset as
-     * `Triple(maxWidth, quality, everyNthFrame)`: the max frame width in
-     * pixels, the JPEG quality, and the frame downsampling factor.
+     * The emulated viewport for one render mode, given the phone's content
+     * box in PHYSICAL pixels ([boxPhysW] x [boxPhysH]) and its display
+     * density (1 dp = [density] px). Returns CSS pixel dimensions and the
+     * device scale factor the remote browser must use. The three are chosen
+     * so a screencast frame coded at (cssW*dsf) x (cssH*dsf) maps 1:1 onto
+     * the phone content box — no scaling, no letterbox bars.
      */
-    fun screencastParams(quality: Quality): Triple<Int, Int, Int> =
-        when (quality) {
-            Quality.Low -> Triple(960, 40, 2)
-            Quality.Balanced -> Triple(1280, 60, 1)
-            Quality.High -> Triple(1920, 72, 1)
-            Quality.Ultra -> Triple(1920, 82, 1)
+    fun emulatedViewport(
+        boxPhysW: Int,
+        boxPhysH: Int,
+        density: Float,
+        mode: BrowserMode,
+    ): ViewportGeometry {
+        if (boxPhysW <= 0 || boxPhysH <= 0 || density <= 0f) {
+            // Defensive phone default (iPhone-class 390x844 @3x).
+            return if (mode == BrowserMode.Mobile) {
+                ViewportGeometry(390, 844, 3.0)
+            } else {
+                ViewportGeometry(1280, 720, 1.0)
+            }
         }
+        return if (mode == BrowserMode.Mobile) {
+            // Use the device's real density (Chrome accepts fractional DSF):
+            // the coded frame then maps 1:1 to physical px — no rescale.
+            val dsf = density.coerceIn(1.5f, 4.0f).toDouble()
+            val cssW = maxOf(320, Math.round(boxPhysW / dsf).toInt())
+            val cssH = maxOf(480, Math.round(boxPhysH / dsf).toInt())
+            ViewportGeometry(cssW, cssH, dsf)
+        } else {
+            // Real desktop layout: fixed desktop CSS width, height follows
+            // the phone aspect ratio, DSF 1 (screencast downscales the frame
+            // to the box width itself).
+            val cssW = DESKTOP_CSS_WIDTH
+            val cssH = maxOf(600, Math.round(cssW * boxPhysH.toFloat() / boxPhysW).toInt())
+            ViewportGeometry(cssW, cssH, 1.0)
+        }
+    }
+
+    /** Physical coded-frame size for a geometry, capped for bandwidth. */
+    fun frameSize(geo: ViewportGeometry, quality: Quality): Pair<Int, Int> {
+        val cap = when (quality) {
+            Quality.Low -> 900
+            Quality.Balanced -> 1260
+            Quality.High -> 1500
+            Quality.Ultra -> 1700
+        }
+        val physW = Math.round(geo.cssWidth * geo.deviceScaleFactor).toInt()
+        val physH = Math.round(geo.cssHeight * geo.deviceScaleFactor).toInt()
+        val scale = (cap.toDouble() / physW).coerceAtMost(1.0)
+        return if (scale >= 1.0) {
+            physW to physH
+        } else {
+            Math.round(physW * scale).toInt() to Math.round(physH * scale).toInt()
+        }
+    }
+
+    /**
+     * Screencast tuning for a [Quality] preset as
+     * `Triple(jpegQuality, everyNthFrame, capWidth)`: JPEG quality, the
+     * frame downsampling factor, and the max coded width (see [frameSize]).
+     */
+    fun screencastTuning(quality: Quality): Triple<Int, Int, Int> =
+        when (quality) {
+            Quality.Low -> Triple(42, 2, 900)
+            Quality.Balanced -> Triple(58, 1, 1260)
+            Quality.High -> Triple(70, 1, 1500)
+            Quality.Ultra -> Triple(82, 1, 1700)
+        }
+
+    /**
+     * Maps a touch fraction (0..1 of the displayed frame) to REMOTE CSS
+     * coordinates inside the emulated viewport. [cssW]/[cssH] are the
+     * emulated CSS dimensions; [scale] is the current pinch page-scale (1.0
+     * when unzoomed) reported by screencast metadata; [scrollX]/[scrollY] are
+     * the metadata scroll offsets and [offsetTop] the browser top inset.
+     * CDP `Input.dispatch*` coordinates are visual-viewport CSS pixels:
+     * under pinch scale s the visual viewport is cssW/s large, and the
+     * visible window starts at (scrollX, scrollY + offsetTop).
+     */
+    fun remoteCssPoint(
+        fx: Float,
+        fy: Float,
+        cssW: Int,
+        cssH: Int,
+        scale: Double = 1.0,
+        scrollX: Double = 0.0,
+        scrollY: Double = 0.0,
+        offsetTop: Double = 0.0,
+    ): Pair<Double, Double> {
+        val s = if (scale > 0.0) scale else 1.0
+        val x = fx.coerceIn(0f, 1f).toDouble() * cssW / s + scrollX
+        val y = fy.coerceIn(0f, 1f).toDouble() * cssH / s + scrollY + offsetTop
+        return x to y
+    }
+
+    const val DESKTOP_CSS_WIDTH = 1280
+
+    /** A modern Android-phone Chrome UA; the Chrome/<ver> token is cosmetic. */
+    const val MOBILE_USER_AGENT =
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+
+    /** A desktop Linux Chrome UA for Desktop mode. */
+    const val DESKTOP_USER_AGENT =
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
     /**
      * Normalises whatever the user typed into the address bar into a URL

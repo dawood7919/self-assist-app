@@ -164,6 +164,10 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
     var streamConfig by remember { mutableStateOf(StreamConfig()) }
     var browserBusy by remember { mutableStateOf<String?>(null) }
     var browserError by remember { mutableStateOf<String?>(null) }
+    var browserMode by remember { mutableStateOf(BrowserMode.Mobile) }
+    var reconnecting by remember { mutableStateOf(false) }
+    // Last viewport we actually applied remotely (dedupes measure callbacks).
+    var appliedViewportKey by remember { mutableStateOf("") }
     var pendingHostKey by remember { mutableStateOf<PendingHostKey?>(null) }
     var provision by remember { mutableStateOf<ProvisionState?>(null) }
     var prepareJob by remember { mutableStateOf<Job?>(null) }
@@ -179,6 +183,100 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
     val activeFrame = activeSessionId?.let { framesBySession[it] }
 
     fun io(block: suspend () -> Unit): Job = scope.launch(Dispatchers.IO) { block() }
+
+    /**
+     * Maps raw exception text to human connection/browser language. Internal
+     * strings ("connectBlocking()", "Not connected — call connect()") must
+     * never reach users; they look like broken diagnostics instead of a
+     * browser.
+     */
+    fun friendlyCloudError(raw: String?): String {
+        val m = raw.orEmpty()
+        return when {
+            m.contains("connectBlocking", ignoreCase = true) ||
+                m.contains("Not connected", ignoreCase = true) ||
+                m.contains("call connect()", ignoreCase = true) ->
+                "The link to your server dropped. Reconnect and reopen the browser."
+            m.contains("channel is closed", ignoreCase = true) ||
+                m.contains("socket closed", ignoreCase = true) ||
+                m.contains("Websocket", ignoreCase = true) ||
+                m.contains("web socket", ignoreCase = true) ||
+                m.contains("timeout", ignoreCase = true) ->
+                "The browser connection stalled. Check your network and tap retry."
+            m.contains("ECONNREFUSED", ignoreCase = true) ||
+                m.contains("refused", ignoreCase = true) ->
+                "Chrome on the server is not accepting connections yet — tap retry in a few seconds."
+            m.isBlank() -> "Something went wrong with the cloud browser. Please retry."
+            else -> m.take(220)
+        }
+    }
+
+    /** True for dropped-link errors that should trigger auto-heal. */
+    fun isDroppedLink(raw: String?): Boolean {
+        val m = raw.orEmpty()
+        return m.contains("connectBlocking", ignoreCase = true) ||
+            m.contains("Not connected", ignoreCase = true) ||
+            m.contains("channel is closed", ignoreCase = true) ||
+            m.contains("socket closed", ignoreCase = true)
+    }
+
+    /**
+     * Best-effort recovery of a dead browser link without user action:
+     * relaunches the remote target (SSH control connection self-heals inside
+     * SshManager) and returns to the last URL.
+     */
+    fun relaunchBrowser() {
+        if (reconnecting) return
+        val currentServer = server ?: return
+        reconnecting = true
+        scope.launch(Dispatchers.IO) {
+            val oldId = activeSessionId
+            val lastUrl = page.url.takeIf { it.isNotBlank() } ?: HOME_URL
+            try {
+                oldId?.let { runCatching { api.closeSession(it) } }
+                val geo = launchViewport(browserMode)
+                val launched = api.launchSession(
+                    serverId = currentServer.id,
+                    browser = BrowserKind.Chrome,
+                    profile = "Default",
+                    resolution = streamConfig.resolution,
+                    quality = streamConfig.quality,
+                    frameRate = streamConfig.frameRate,
+                    timeoutSecs = 60,
+                    mode = browserMode,
+                    cssWidth = geo.cssWidth,
+                    cssHeight = geo.cssHeight,
+                    deviceScaleFactor = geo.deviceScaleFactor,
+                )
+                launched.onSuccess { s ->
+                    activeSessionId = s.id
+                    initialNavDone.add(s.id)
+                    api.navigate(s.id, lastUrl)
+                    reconnecting = false
+                    browserError = null
+                }.onFailure {
+                    reconnecting = false
+                    browserError = friendlyCloudError(it.message)
+                }
+            } finally {
+                reconnecting = false
+            }
+        }
+    }
+
+    /**
+     * Viewport measured from the device: physical content area (screen minus
+     * toolbar/bottom bar) plus density. The BrowserView reports exact dims
+     * once composed; this is the launch-time estimate.
+     */
+    fun launchViewport(mode: BrowserMode): ViewportGeometry {
+        val dm = context.resources.displayMetrics
+        val toolbarPx = (56f * dm.density).toInt()
+        val bottomPx = (44f * dm.density).toInt()
+        val physW = dm.widthPixels.coerceAtLeast(360)
+        val physH = (dm.heightPixels - toolbarPx - bottomPx).coerceAtLeast(640)
+        return CdpInput.emulatedViewport(physW, physH, dm.density, mode)
+    }
 
     fun refreshSessions() {
         scope.launch {
@@ -303,6 +401,8 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
         }
         val serverId = server.id
         browserError = null
+        reconnecting = false
+        appliedViewportKey = ""
         browserBusy = "Starting your browser on the VPS…"
         scope.launch {
             prepareJob?.join()
@@ -318,6 +418,9 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
                     .firstOrNull { it.state != SessionState.Ended }
             }
             val session = existing ?: run {
+                // Mobile-first: the remote tab emulates THIS phone's content
+                // area, so sites serve mobile pages and frames fill screen.
+                val geo = launchViewport(browserMode)
                 val launched = withContext(Dispatchers.IO) {
                     api.launchSession(
                         serverId = serverId,
@@ -327,6 +430,10 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
                         quality = streamConfig.quality,
                         frameRate = streamConfig.frameRate,
                         timeoutSecs = 60,
+                        mode = browserMode,
+                        cssWidth = geo.cssWidth,
+                        cssHeight = geo.cssHeight,
+                        deviceScaleFactor = geo.deviceScaleFactor,
                     )
                 }
                 launched.getOrElse {
@@ -420,10 +527,42 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
     val browserInput = remember(api) {
         object : BrowserInput {
             private fun sessionId(): String? = activeSessionIdState.value
+            private fun handleFailure(raw: String?) {
+                if (isDroppedLink(raw)) {
+                    // The CDP target (or SSH) died under us: heal quietly;
+                    // relaunchBrowser() owns the reconnecting flag/guard.
+                    demoNotice = null
+                    relaunchBrowser()
+                } else {
+                    demoNotice = friendlyCloudError(raw)
+                }
+            }
             private fun run(call: suspend VpsApi.(String) -> Result<*>) {
                 val id = sessionId() ?: return
                 scope.launch(Dispatchers.IO) {
-                    api.call(id).onFailure { demoNotice = it.message }
+                    api.call(id).onFailure { handleFailure(it.message) }
+                }
+            }
+
+            override fun touchStart(points: List<TouchPointFraction>) {
+                val id = sessionId() ?: return
+                scope.launch(Dispatchers.IO) {
+                    api.touchStart(id, points).onFailure { handleFailure(it.message) }
+                }
+            }
+
+            override fun touchMove(points: List<TouchPointFraction>) {
+                val id = sessionId() ?: return
+                // Hot path: fire-and-forget without extra coroutine churn.
+                scope.launch(Dispatchers.IO) {
+                    api.touchMove(id, points).onFailure { handleFailure(it.message) }
+                }
+            }
+
+            override fun touchEnd(points: List<TouchPointFraction>) {
+                val id = sessionId() ?: return
+                scope.launch(Dispatchers.IO) {
+                    api.touchEnd(id, points).onFailure { handleFailure(it.message) }
                 }
             }
 
@@ -451,7 +590,7 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
                 val id = sessionId() ?: return
                 scope.launch(Dispatchers.IO) {
                     api.wheel(id, fx, fy, deltaXPx, deltaYPx, ctrlKey)
-                        .onFailure { demoNotice = it.message }
+                        .onFailure { handleFailure(it.message) }
                 }
             }
 
@@ -463,7 +602,7 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
                 scope.launch(Dispatchers.IO) {
                     api.zoom(id, steps, fx, fy)
                         .onSuccess { page = page.copy(zoomPct = it) }
-                        .onFailure { demoNotice = it.message }
+                        .onFailure { handleFailure(it.message) }
                 }
             }
 
@@ -545,8 +684,31 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
                 if (id != null) {
                     scope.launch(Dispatchers.IO) {
                         api.applyStream(id, quality, streamConfig.frameRate)
-                            .onFailure { demoNotice = it.message }
+                            .onFailure { demoNotice = friendlyCloudError(it.message) }
                     }
+                }
+            },
+            onModeChange = { mode ->
+                val id = activeSessionId ?: return@BrowserViewActions
+                browserMode = mode
+                page = page.copy(zoomPct = 100)
+                scope.launch(Dispatchers.IO) {
+                    api.setMode(id, mode)
+                        .onFailure {
+                            browserError = friendlyCloudError(it.message)
+                        }
+                }
+            },
+            onViewportMeasured = { cssW, cssH, density ->
+                val id = activeSessionId ?: return@BrowserViewActions
+                val key = "$browserMode:$cssW:$cssH:$density"
+                if (key == appliedViewportKey) return@BrowserViewActions
+                appliedViewportKey = key
+                scope.launch(Dispatchers.IO) {
+                    api.applyViewport(id, ViewportGeometry(cssW, cssH, density.toDouble()))
+                        .onFailure {
+                            // Fitting is best-effort: launch defaults still work.
+                        }
                 }
             },
             onRetry = {
@@ -555,9 +717,16 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
                 if (id == null) {
                     openBrowser()
                 } else {
-                    scope.launch(Dispatchers.IO) {
-                        api.applyStream(id, streamConfig.quality, streamConfig.frameRate)
-                        api.pageInfo(id).onSuccess { page = it }
+                    // If the CDP link itself is gone, rebuild the whole target.
+                    if (reconnecting) {
+                        relaunchBrowser()
+                    } else {
+                        scope.launch(Dispatchers.IO) {
+                            api.applyStream(id, streamConfig.quality, streamConfig.frameRate)
+                            api.pageInfo(id)
+                                .onSuccess { page = it }
+                                .onFailure { relaunchBrowser() }
+                        }
                     }
                 }
             },
@@ -572,7 +741,7 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
         tool = tool,
         onBack = { goBack() },
         modifier = modifier,
-        subtitle = demoNotice ?: server?.name ?: "Not connected",
+        subtitle = demoNotice?.let { friendlyCloudError(it) } ?: server?.name ?: "Not connected",
         actions = {
             OrbitIconButton(
                 icon = OrbitIcons.Refresh,
@@ -628,9 +797,11 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
                         page = page,
                         zoomPct = CloudBrowserEngine.clampZoom(page.zoomPct),
                         interaction = BrowserInteraction.Direct,
+                        browserMode = browserMode,
                         quality = streamConfig.quality,
                         busy = browserBusy,
-                        error = browserError,
+                        error = browserError?.let { friendlyCloudError(it) },
+                        reconnecting = reconnecting,
                     ),
                     actions = browserActions,
                 )
@@ -818,6 +989,7 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
                                             scope.launch {
                                                 browserBusy = "Starting your browser on the VPS…"
                                                 prepareJob?.join()
+                                                val geo = launchViewport(browserMode)
                                                 val result = withContext(Dispatchers.IO) {
                                                     api.launchSession(
                                                         serverId = serverId,
@@ -827,6 +999,10 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
                                                         quality = quality,
                                                         frameRate = frameRate,
                                                         timeoutSecs = timeoutSecs,
+                                                        mode = browserMode,
+                                                        cssWidth = geo.cssWidth,
+                                                        cssHeight = geo.cssHeight,
+                                                        deviceScaleFactor = geo.deviceScaleFactor,
                                                     )
                                                 }
                                                 result.onSuccess { launched ->
@@ -841,7 +1017,7 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
                                                     push(CloudRoute.BrowserView)
                                                 }.onFailure {
                                                     browserBusy = null
-                                                    demoNotice = it.message
+                                                    demoNotice = friendlyCloudError(it.message)
                                                 }
                                             }
                                         },

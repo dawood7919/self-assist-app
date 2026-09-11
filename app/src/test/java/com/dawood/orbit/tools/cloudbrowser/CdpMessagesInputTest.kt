@@ -79,6 +79,45 @@ class CdpMessagesInputTest {
     }
 
     @Test
+    fun deviceMetricsCarryMobileViewportAndDsf() {
+        val p = params(CdpMessages.setDeviceMetrics(3, 393, 800, 2.75, mobile = true))
+        assertEquals(393, p.getInt("width"))
+        assertEquals(800, p.getInt("height"))
+        assertEquals(2.75, p.getDouble("deviceScaleFactor"), 0.0)
+        assertTrue(p.getBoolean("mobile"))
+        val touch = params(CdpMessages.setTouchEmulation(4, true, 1))
+        assertTrue(touch.getBoolean("enabled"))
+        assertEquals(1, touch.getInt("maxTouchPoints"))
+    }
+
+    @Test
+    fun userAgentCarriesPlatformHint() {
+        val mobile = params(CdpMessages.setUserAgent(5, "PhoneUA", mobile = true))
+        assertEquals("PhoneUA", mobile.getString("userAgent"))
+        assertTrue(mobile.getJSONObject("userAgentMetadata").getBoolean("mobile"))
+        assertEquals("Android", mobile.getJSONObject("userAgentMetadata").getString("platform"))
+    }
+
+    @Test
+    fun touchEventListsFingersWithStableIds() {
+        val p = params(
+            CdpMessages.touchEvent(
+                9,
+                "touchMove",
+                listOf(
+                    CdpMessages.TouchPoint(0, 10.0, 20.0),
+                    CdpMessages.TouchPoint(7, 30.0, 40.0),
+                ),
+            ),
+        )
+        assertEquals("touchMove", p.getString("type"))
+        val arr = p.getJSONArray("touchPoints")
+        assertEquals(2, arr.length())
+        assertEquals(7, arr.getJSONObject(1).getInt("id"))
+        assertEquals(40.0, arr.getJSONObject(1).getDouble("y"), 0.0)
+    }
+
+    @Test
     fun reloadAndStopUsePageDomain() {
         assertTrue(CdpMessages.reload(6).contains("Page.reload"))
         assertTrue(CdpMessages.stopLoading(7).contains("Page.stopLoading"))

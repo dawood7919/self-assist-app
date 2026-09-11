@@ -27,7 +27,18 @@ interface BrowserInput {
     /** Wheel scroll in REMOTE CSS pixels; ctrlKey turns it into zoom. */
     fun wheel(fx: Float, fy: Float, deltaXPx: Double, deltaYPx: Double, ctrlKey: Boolean = false)
 
-    /** Zoom one notch in/out; the label updates through page state. */
+    // ── Real multitouch (mobile emulation); fractions of the frame ─────
+
+    /** One or more fingers land. Points carry stable finger ids. */
+    fun touchStart(points: List<TouchPointFraction>)
+
+    /** Active fingers move to new fractions. */
+    fun touchMove(points: List<TouchPointFraction>)
+
+    /** Fingers lift (released points included at their final spot). */
+    fun touchEnd(points: List<TouchPointFraction>)
+
+    /** Zoom one notch in/out around [fx],[fy]; the label updates itself. */
     fun zoom(steps: Int, fx: Float = 0.5f, fy: Float = 0.5f)
 
     fun resetZoom()

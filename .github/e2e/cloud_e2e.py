@@ -33,18 +33,53 @@ except ImportError:
 
 
 def start_local_site():
-    """Serves a tall scrollable page over HTTP (Chrome blocks top-level
-    navigation to data: URLs once an https origin has loaded)."""
+    """Serves test pages over HTTP (Chrome blocks top-level navigation to
+    data: URLs once an https origin has loaded)."""
     www = tempfile.mkdtemp(prefix="orbit-e2e-")
-    with open(os.path.join(www, "tall.html"), "w", encoding="utf-8") as f:
-        f.write("<!doctype html><body style='margin:0'>"
-                "<div style='height:6000px;width:100%;"
-                "background:linear-gradient(#fff,#036)'></div></body>")
+    pages = {
+        "tall.html": (
+            "<!doctype html><body style='margin:0'>"
+            "<div style='height:6000px;width:100%;"
+            "background:linear-gradient(#fff,#036)'></div></body>"),
+        # Reports the environment the page actually renders in.
+        "probe.html": (
+            "<!doctype html><meta name=viewport content='width=device-width,"
+            "initial-scale=1'>"
+            "<body style='margin:0'>"
+            "<pre id=out></pre><script>"
+            "document.getElementById('out').textContent=JSON.stringify({"
+            "iw:window.innerWidth,ih:window.innerHeight,"
+            "dpr:window.devicePixelRatio,"
+            "touch:('ontouchstart' in window),"
+            "points:navigator.maxTouchPoints,"
+            "ua:navigator.userAgent,"
+            "mobile:matchMedia('(pointer:coarse)').matches});"
+            "</script></body>"),
+        # Full-width button that counts press/release driven clicks.
+        "tap.html": (
+            "<!doctype html><meta name=viewport content='width=device-width'>"
+            "<body style='margin:0'>"
+            "<button id=b style='position:fixed;left:0;top:0;width:120px;"
+            "height:60px;font-size:24px'>TAP</button>"
+            "<div id=n>0</div><script>"
+            "var n=0;document.getElementById('b').addEventListener('click',"
+            "function(){n++;document.getElementById('n').textContent=n;});"
+            "</script></body>"),
+        # Tall page scrolled only by real touch dragging.
+        "touchscroll.html": (
+            "<!doctype html><meta name=viewport content='width=device-width'>"
+            "<body style='margin:0'>"
+            "<div style='height:5000px;width:100%;"
+            "background:linear-gradient(#fff,#063)'></div></body>"),
+    }
+    for name, html in pages.items():
+        with open(os.path.join(www, name), "w", encoding="utf-8") as f:
+            f.write(html)
     handler = functools.partial(
         httpserver.SimpleHTTPRequestHandler, directory=www)
     srv = socketserver.TCPServer(("127.0.0.1", 8901), handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    return "http://127.0.0.1:8901/tall.html"
+    return "http://127.0.0.1:8901/"
 
 
 class Cdp:
@@ -462,11 +497,145 @@ def main():
     title_after = page.eval("document.title")
     step("reload", bool(title_after), f"title={title_after}")
 
+    # ── Mobile emulation: the page must believe it runs on a phone ──────
+    site_base = start_local_site()
+
+    def nav_wait(url):
+        before = len(page.frames)
+        page.send("Page.navigate", {"url": url})
+        dl = time.time() + 6
+        while time.time() < dl and len(page.frames) <= before:
+            time.sleep(0.05)
+        time.sleep(0.6)
+
+    page.send("Page.stopScreencast", {})
+    time.sleep(0.2)
+    MOBILE_UA = ("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 "
+                 "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+    DESKTOP_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+    page.send("Network.enable", {})
+
+    def emulate(css_w, css_h, dsf, mobile, ua, touch_pts=1):
+        page.send("Emulation.setDeviceMetricsOverride",
+                  {"width": css_w, "height": css_h,
+                   "deviceScaleFactor": dsf, "mobile": mobile})
+        page.send("Emulation.setTouchEmulationEnabled",
+                  {"enabled": touch_pts > 0, "maxTouchPoints": touch_pts})
+        page.send("Network.setUserAgentOverride", {"userAgent": ua})
+
+    def restart_caps(w, h):
+        try:
+            page.send("Page.stopScreencast", {})
+        except Exception:
+            pass
+        time.sleep(0.2)
+        page.send("Page.startScreencast",
+                  {"format": "jpeg", "quality": 70, "maxWidth": w,
+                   "maxHeight": h, "everyNthFrame": 1})
+        time.sleep(0.4)
+
+    emulate(393, 800, 2.75, True, MOBILE_UA, 1)
+    restart_caps(1081, 2200)
+    nav_wait(site_base + "probe.html")
+    probe = page.eval("document.getElementById('out').textContent")
+    pj = json.loads(probe)
+    # coarse-pointer media query is informational across Chrome builds;
+    # the hard signals are layout width, DSF, touch points and UA.
+    mobile_ok = (abs(pj.get("iw", 0) - 393) <= 2 and
+                 abs(pj.get("dpr", 0) - 2.75) < 0.05 and
+                 pj.get("points", 0) >= 1 and
+                 "Mobile" in pj.get("ua", ""))
+    step("mobileEmulation", mobile_ok,
+         f"iw={pj.get('iw')} ih={pj.get('ih')} dpr={pj.get('dpr')} "
+         f"touch={pj.get('touch')} points={pj.get('points')} "
+         f"coarse={pj.get('mobile')} uaMobile={'Mobile' in pj.get('ua','')}")
+    summary["mobile"] = pj
+
+    # Mobile coded frame must be phone-shaped and ~physical-pixel wide.
+    j = save_jpeg(args.out, "06-mobile.jpg", page.frames[-1][1])
+    mw, mh = jpeg_size(j)
+    meta = page.frames[-1][2]
+    mobile_frame_ok = mw >= 900 and mh > mw and meta.get("deviceSize", {}).get("width") == 393
+    step("mobileFrameFills", mobile_frame_ok,
+         f"jpeg={mw}x{mh} meta={json.dumps(meta)[:180]}")
+
+    # Real touch tap (touchStart then touchEnd) clicks the button.
+    nav_wait(site_base + "tap.html")
+    def touch(type_, points):
+        page.send("Input.dispatchTouchEvent", {"type": type_, "touchPoints": [
+            {"id": i, "x": x, "y": y, "radiusX": 1, "radiusY": 1,
+             "force": 0.0 if type_ == "touchEnd" else 1.0}
+            for i, (x, y) in enumerate(points)]})
+    time.sleep(0.2)
+    touch("touchStart", [(60.0, 30.0)])
+    time.sleep(0.05)
+    touch("touchEnd", [(60.0, 30.0)])
+    time.sleep(0.4)
+    taps = page.eval("document.getElementById('n').textContent")
+    step("touchTap", taps == "1", f"clicks={taps}")
+
+    # Real touch drag scrolls the page (finger up = page down).
+    nav_wait(site_base + "touchscroll.html")
+    page.eval("window.scrollTo(0,0)")
+    time.sleep(0.2)
+    touch("touchStart", [(200.0, 600.0)])
+    for y in (540, 480, 400, 300, 200, 120):
+        touch("touchMove", [(200.0, float(y))])
+        time.sleep(0.05)
+    touch("touchEnd", [(200.0, 120.0)])
+    time.sleep(0.5)
+    tscroll = int(float(page.eval("window.scrollY")))
+    step("touchScroll", tscroll > 100, f"scrollY={tscroll}")
+    summary["mobileTouchScrollY"] = tscroll
+
+    # Native two-finger pinch: informational; fallback pinch gesture is the
+    # proven path (zoomPinchGesture above).
+    pinch_scale_before = float(page.eval("window.visualViewport.scale"))
+    try:
+        touch("touchStart", [(150.0, 400.0), (243.0, 400.0)])
+        for k in range(1, 7):
+            d = 20 * k
+            touch("touchMove", [(150.0 - d, 400.0), (243.0 + d, 400.0)])
+            time.sleep(0.04)
+        touch("touchEnd", [(50.0, 400.0), (343.0, 400.0)])
+        time.sleep(0.4)
+        pinch_scale_after = float(page.eval("window.visualViewport.scale"))
+    except Exception as e:
+        pinch_scale_after = pinch_scale_before
+        pinch_error_native = str(e)[:120]
+    else:
+        pinch_error_native = ""
+    native_pinch = abs(pinch_scale_after - pinch_scale_before) > 0.05
+    step("nativeMultitouchPinchInfo", True,
+         f"nativePinch={native_pinch} {pinch_scale_before}->{pinch_scale_after} "
+         f"{pinch_error_native} (gating uses synthesizePinchGesture)")
+    page.send("Emulation.setPageScaleFactor", {"pageScaleFactor": 1.0})
+    time.sleep(0.2)
+
+    # Desktop mode: real desktop viewport + desktop UA, no touch.
+    emulate(1280, 2607, 1.0, False, DESKTOP_UA, 0)
+    restart_caps(1260, 2567)
+    nav_wait(site_base + "probe.html")
+    dpj = json.loads(page.eval("document.getElementById('out').textContent"))
+    desktop_ok = (abs(dpj.get("iw", 0) - 1280) <= 2 and
+                  dpj.get("points", 1) == 0 and
+                  "Mobile" not in dpj.get("ua", ""))
+    step("desktopMode", desktop_ok,
+         f"iw={dpj.get('iw')} points={dpj.get('points')} "
+         f"uaMobile={'Mobile' in dpj.get('ua','')}")
+
+    # Clear emulation so the legacy cadence/resize tail behaves unchanged.
+    page.send("Emulation.clearDeviceMetricsOverride", {})
+    page.send("Emulation.setTouchEmulationEnabled",
+              {"enabled": False, "maxTouchPoints": 0})
+    page.send("Network.setUserAgentOverride", {"userAgent": DESKTOP_UA})
+    time.sleep(0.3)
+
     # 12. frame cadence under interaction (scroll a TALL page for 3s) -----
     # example.com has no scrollable overflow, so wheel events produce no
     # damage and no frames; navigate to a tall page instead.
-    tall_url = start_local_site()
-    page.send("Page.navigate", {"url": tall_url})
+    page.send("Page.navigate", {"url": site_base + "tall.html"})
     base_n = len(page.frames)
     deadline = time.time() + 4.0
     while time.time() < deadline and len(page.frames) <= base_n:

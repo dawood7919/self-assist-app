@@ -260,6 +260,142 @@ object CdpMessages {
             params = JSONObject().put("pageScaleFactor", factor),
         )
 
+    /**
+     * Turns the tab into a phone (or a desktop window) at the CDP level.
+     * This is NOT a CSS transform: the website actually re-lays out at
+     * [cssWidth] x [cssHeight] CSS pixels at [deviceScaleFactor], with real
+     * touch events when [mobile] is true. The screencast then codes exactly
+     * the phone-sized viewport, so frames fill the screen edge to edge.
+     */
+    fun setDeviceMetrics(
+        id: Int,
+        cssWidth: Int,
+        cssHeight: Int,
+        deviceScaleFactor: Double,
+        mobile: Boolean,
+    ): String =
+        envelope(
+            id = id,
+            method = "Emulation.setDeviceMetricsOverride",
+            params = JSONObject()
+                .put("width", cssWidth)
+                .put("height", cssHeight)
+                .put("deviceScaleFactor", deviceScaleFactor)
+                .put("mobile", mobile),
+        )
+
+    /** Reverts to the real (host) viewport after a device override. */
+    fun clearDeviceMetrics(id: Int): String =
+        envelope(
+            id = id,
+            method = "Emulation.clearDeviceMetricsOverride",
+            params = JSONObject(),
+        )
+
+    /** Enables/disables synthetic touch (and touch event synthesis). */
+    fun setTouchEmulation(id: Int, enabled: Boolean, maxTouchPoints: Int = 1): String =
+        envelope(
+            id = id,
+            method = "Emulation.setTouchEmulationEnabled",
+            params = JSONObject()
+                .put("enabled", enabled)
+                .put("maxTouchPoints", maxTouchPoints),
+        )
+
+    /**
+     * Mobile-mode input: one or more real fingers. [type] is touchStart,
+     * touchMove, touchEnd or touchCancel. Each point is `id` + CSS x/y;
+     * lifted fingers are omitted (touchEnd sends the released ids only).
+     */
+    fun touchEvent(
+        id: Int,
+        type: String,
+        points: List<TouchPoint>,
+    ): String {
+        val arr = org.json.JSONArray()
+        points.forEach { p ->
+            arr.put(
+                JSONObject()
+                    .put("x", p.x)
+                    .put("y", p.y)
+                    .put("id", p.id)
+                    .put("radiusX", 1.0)
+                    .put("radiusY", 1.0)
+                    .put("force", if (type == "touchEnd") 0.0 else 1.0),
+            )
+        }
+        return envelope(
+            id = id,
+            method = "Input.dispatchTouchEvent",
+            params = JSONObject()
+                .put("type", type)
+                .put("touchPoints", arr),
+        )
+    }
+
+    /** One touch finger for [touchEvent], in emulated CSS viewport pixels. */
+    data class TouchPoint(val id: Int, val x: Double, val y: Double)
+
+    /**
+     * Anchored pinch gesture around ([x],[y]); [scaleFactor] is absolute
+     * (1.0 = identity). Probe-verified on real headless Chrome to move
+     * visualViewport.scale (used for smooth zoom-in around the focal point).
+     */
+    fun pinchGesture(
+        id: Int,
+        x: Double,
+        y: Double,
+        scaleFactor: Double,
+        relativeSpeed: Int = 400,
+    ): String =
+        envelope(
+            id = id,
+            method = "Input.synthesizePinchGesture",
+            params = JSONObject()
+                .put("x", x)
+                .put("y", y)
+                .put("scaleFactor", scaleFactor)
+                .put("relativeSpeed", relativeSpeed)
+                .put("gestureSourceType", "touch"),
+        )
+
+    /**
+     * Overrides the User-Agent string (and the client hints platform) so
+     * sites serve mobile/desktop markup. Requires the emulation override to
+     * be active; [platform] is the client-hints platformFormFactor hint.
+     */
+    fun setUserAgent(id: Int, userAgent: String, platform: String? = null, mobile: Boolean): String {
+        val brands = org.json.JSONArray()
+        listOf("Google Chrome" to "124", "Chromium" to "124", "Not-A.Brand" to "99").forEach {
+            brands.put(JSONObject().put("brand", it.first).put("version", it.second))
+        }
+        return envelope(
+            id = id,
+            method = "Network.setUserAgentOverride",
+            params = JSONObject()
+                .put("userAgent", userAgent)
+                .put(
+                    "userAgentMetadata",
+                    JSONObject()
+                        .put("platform", platform ?: if (mobile) "Android" else "Linux")
+                        .put("platformVersion", if (mobile) "14.0.0" else "6.5.0")
+                        .put("architecture", if (mobile) "arm" else "x86")
+                        .put("model", if (mobile) "Pixel 8" else "")
+                        .put("mobile", mobile)
+                        .put("brands", brands)
+                        .put("fullVersionList", brands),
+                ),
+        )
+    }
+
+    /** Enables the Network domain (needed before UA overrides on some builds). */
+    fun networkEnable(id: Int): String =
+        envelope(
+            id = id,
+            method = "Network.enable",
+            params = JSONObject(),
+        )
+
     /** Reads the in-tab navigation history (`Page.getNavigationHistory`). */
     fun getNavigationHistory(id: Int): String =
         envelope(
@@ -343,6 +479,7 @@ object CdpMessages {
                             ?: meta?.optDouble("scrollOffsetX", 0.0) ?: 0.0,
                         scrollOffsetY = scroll?.optDouble("y")
                             ?: meta?.optDouble("scrollOffsetY", 0.0) ?: 0.0,
+                        offsetTop = meta?.optDouble("offsetTop", 0.0) ?: 0.0,
                     )
                 }
                 "Page.frameNavigated" -> {
@@ -404,6 +541,7 @@ object CdpMessages {
                 url = obj.optString("url", ""),
                 title = obj.optString("title", ""),
                 zoomPct = (obj.optDouble("zoom", 1.0) * 100.0).toInt().coerceIn(25, 500),
+                inputFocused = obj.optBoolean("focused", false),
             )
         } catch (_: Exception) {
             null
@@ -440,6 +578,7 @@ sealed interface CdpEvent {
         val pageScaleFactor: Double = 1.0,
         val scrollOffsetX: Double = 0.0,
         val scrollOffsetY: Double = 0.0,
+        val offsetTop: Double = 0.0,
     ) : CdpEvent
 
     /** A frame finished navigating (main-frame navigations drive the URL bar). */

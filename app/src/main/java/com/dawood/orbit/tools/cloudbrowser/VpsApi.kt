@@ -45,7 +45,36 @@ interface VpsApi {
         quality: Quality,
         frameRate: Int,
         timeoutSecs: Int,
+        mode: BrowserMode = BrowserMode.Mobile,
+        cssWidth: Int = 0,
+        cssHeight: Int = 0,
+        deviceScaleFactor: Double = 0.0,
     ): Result<BrowserSession>
+
+    /**
+     * Switches the tab between phone and desktop emulation in place: device
+     * metrics, touch capability and User-Agent change, then the page reloads
+     * in the SAME target, so URL, cookies and storage survive.
+     */
+    fun setMode(id: String, mode: BrowserMode): Result<Unit>
+
+    /**
+     * Re-fits the emulated viewport (phone rotation / density change)
+     * without reloading. The coded frame keeps matching the phone content
+     * box.
+     */
+    fun applyViewport(id: String, geometry: ViewportGeometry): Result<Unit>
+
+    // ── Real touch (mobile emulation; fractions of the displayed frame) ─
+
+    /** Begins a touch sequence. Each point is `id` to x/y fractions. */
+    fun touchStart(id: String, points: List<TouchPointFraction>): Result<Unit>
+
+    /** Moves the active fingers to new fractions. */
+    fun touchMove(id: String, points: List<TouchPointFraction>): Result<Unit>
+
+    /** Ends the touch sequence; [points] carries the final spots. */
+    fun touchEnd(id: String, points: List<TouchPointFraction>): Result<Unit>
 
     /** Pauses rendering of session [id] without closing it. */
     fun pauseSession(id: String): Result<Unit>

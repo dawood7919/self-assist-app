@@ -17,10 +17,12 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Callbacks from the phone viewport onto the remote browser. All point
- * coordinates are 0..1 fractions OF THE REMOTE VIEWPORT (the gesture box is
- * already letterbox-sized to the coded frame, so a fraction maps 1:1).
+ * coordinates are 0..1 fractions OF THE REMOTE VIEWPORT (the coded frame
+ * fills the gesture box edge to edge in mobile mode, so a fraction maps
+ * 1:1).
  */
 class BrowserGestures(
+    // Mouse-style semantics (Pointer mode, and desktop mode).
     val onTap: (Offset) -> Unit,
     val onDoubleTap: (Offset) -> Unit,
     val onLongTap: (Offset) -> Unit,
@@ -33,6 +35,13 @@ class BrowserGestures(
     val onTwoFingerTap: (Offset) -> Unit,
     val onScroll: (fx: Float, fy: Float, dxPhonePx: Float, dyPhonePx: Float) -> Unit,
     val onZoom: (fx: Float, fy: Float, steps: Int) -> Unit,
+    // Native touch semantics (mobile emulation): one finger down/move/up as
+    // real Input.dispatchTouchEvent sequences. Tap, double-tap zoom, long
+    // press, fling scrolling and inner-container scroll are all performed by
+    // the REMOTE browser itself.
+    val onTouchStart: (Offset) -> Unit = {},
+    val onTouchMove: (Offset) -> Unit = {},
+    val onTouchEnd: (Offset) -> Unit = {},
 )
 
 private const val LONG_PRESS_MS = 450L
@@ -42,23 +51,20 @@ private const val TWO_FINGER_TAP_MS = 260L
 private const val ZOOM_RATIO_PER_STEP = 1.12f
 
 /**
- * Touch surface that makes the remote DESKTOP browser behave like a normal
- * phone browser while still exposing a full mouse:
+ * Touch surface for the cloud browser.
  *
- * Direct mode ([BrowserInteraction.Direct]):
- *  - tap = left click at that point
- *  - quick second tap = double click
- *  - press and hold = right click
- *  - press, hold and drag = left-button drag (text selection, sliders, maps)
- *  - two-finger drag = wheel scroll
- *  - pinch open/closed = remote page zoom (pinch page-scale >=100%,
- *    CSS zoom below 100% — the two mechanisms the e2e probe verified)
- *  - two-finger tap = right click
+ * Native touch ([touchNative] = true, the default in Mobile mode):
+ *  - one finger = real remote touch: tap, double tap, long press, press-and
+ *    drag scrolling and fling are all performed by the remote browser;
+ *  - pinch = genuine page-zoom notches anchored at the focal point;
+ *  - two-finger pan while zoomed scrolls; two-finger tap = right click.
  *
- * Trackpad mode ([BrowserInteraction.Trackpad]):
- *  - one-finger drag = move a floating cursor (like a laptop touchpad)
- *  - one-finger tap = click under the cursor (double tap = double click)
- *  - two-finger drag / pinch behave the same as Direct
+ * Mouse direct (Desktop mode):
+ *  - tap = left click, second tap = double click, hold = right click,
+ *    drag = left-button drag, two-finger drag = wheel.
+ *
+ * Trackpad ([BrowserInteraction.Trackpad], the optional Pointer mode):
+ *  - one-finger drag moves a floating cursor; tap clicks under the cursor.
  *
  * Events are observed on the Initial pass so the outer scroll chrome can
  * never steal the viewport's gestures.
@@ -66,7 +72,8 @@ private const val ZOOM_RATIO_PER_STEP = 1.12f
 fun Modifier.browserGestures(
     mode: BrowserInteraction,
     gestures: BrowserGestures,
-): Modifier = this.pointerInput(gestures) {
+    touchNative: Boolean,
+): Modifier = this.pointerInput(gestures, mode, touchNative) {
     var lastTapTime = 0L
     var lastTapPoint: Offset? = null
     val trackpadTapTime = longArrayOf(0L)
@@ -97,6 +104,13 @@ fun Modifier.browserGestures(
                 (p.y / size.height.toFloat()).coerceIn(0f, 1f),
             )
 
+        // Native single finger: forward the full touch sequence. The first
+        // down is already in hand; report it immediately so long-press and
+        // fast taps behave exactly like a physical screen.
+        if (touchNative && mode == BrowserInteraction.Direct) {
+            gestures.onTouchStart(fractionAt(start))
+        }
+
         fun endOneFingerDrag(at: Offset) {
             if (dragging) gestures.onPressEnd(fractionAt(at))
             dragging = false
@@ -110,7 +124,9 @@ fun Modifier.browserGestures(
                 awaitPointerEvent(PointerEventPass.Initial)
             } ?: run {
                 // Idle long-press deadline elapsed with one finger held.
-                if (modeOne && !longPressFired && !movedFar) {
+                if (modeOne && !longPressFired && !movedFar &&
+                    !(touchNative && mode == BrowserInteraction.Direct)
+                ) {
                     longPressFired = true
                     gestures.onLongTap(fractionAt(last))
                 }
@@ -121,6 +137,11 @@ fun Modifier.browserGestures(
                 val pressed = event.changes.count { it.pressed }
                 if (pressed >= 2 && modeOne) {
                     modeOne = false
+                    // In native touch, lift the single finger cleanly before
+                    // switching to pinch/zoom (which is CDP page zoom).
+                    if (touchNative && mode == BrowserInteraction.Direct) {
+                        gestures.onTouchEnd(fractionAt(last))
+                    }
                     endOneFingerDrag(last)
                     twoStart = System.currentTimeMillis()
                     twoMoved = false
@@ -133,6 +154,10 @@ fun Modifier.browserGestures(
                         if (!change.pressed) {
                             // Finger up -> end of the one-finger gesture.
                             val up = change.position
+                            if (touchNative && mode == BrowserInteraction.Direct) {
+                                gestures.onTouchEnd(fractionAt(up))
+                                return@awaitEachGesture
+                            }
                             endOneFingerDrag(up)
                             // A tap is a release without leaving touch slop;
                             // speed matters only for the double-tap window.
@@ -166,7 +191,13 @@ fun Modifier.browserGestures(
                         if (change.positionChanged()) {
                             val p = change.position
                             val dist = (p - start).getDistance()
-                            if (mode == BrowserInteraction.Trackpad) {
+                            if (touchNative && mode == BrowserInteraction.Direct) {
+                                // Forward every move: the remote browser
+                                // owns scrolling, fling and sliders.
+                                if (dist > 1f) gestures.onTouchMove(fractionAt(p))
+                                last = p
+                                if (dist > slop) movedFar = true
+                            } else if (mode == BrowserInteraction.Trackpad) {
                                 val dfx = CdpInput.trackpadFractionDelta(p.x - last.x, size.width.toFloat())
                                 val dfy = CdpInput.trackpadFractionDelta(p.y - last.y, size.height.toFloat())
                                 if (dfx != 0f || dfy != 0f) gestures.onTrackpadMove(dfx, dfy)
@@ -186,7 +217,7 @@ fun Modifier.browserGestures(
                         }
                     }
                 } else {
-                    // ── Two-finger: pinch zoom + wheel scroll + tap ──
+                    // ── Two-finger: pinch zoom + pan + tap ──
                     val now = System.currentTimeMillis()
                     event.changes.fastForEach { change ->
                         if (change.positionChanged()) twoMoved = true
@@ -254,5 +285,3 @@ private fun currentFocal(event: androidx.compose.ui.input.pointer.PointerEvent):
         down.map { it.y }.average().toFloat(),
     )
 }
-
-
