@@ -108,7 +108,13 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
     val context = LocalContext.current
     val appContext = context.applicationContext
     val ssh = remember(appContext) { SshManager(appContext) }
-    val okHttp = remember { OkHttpClient() }
+    val okHttp = remember {
+        // WebSocket pings keep the CDP socket (tunnelled over SSH) alive
+        // during quiet spells so the reader never dies of an idle timeout.
+        OkHttpClient.Builder()
+            .pingInterval(20, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
     val viewportBridge = remember { ViewportBridge() }
     // States the CDP reader-thread callbacks update: declared before the API so
     // the frame/page lambdas capture stable MutableState references.
@@ -229,17 +235,23 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
         }
     }
 
-    // Pause the stream when leaving the browser; resume on return.
+    // Pause the stream only when LEAVING the browser route; resume when it
+    // comes forward. Opening a session while still on Home must not pause the
+    // stream that the browser route is about to show.
+    var previousRoute by remember { mutableStateOf(route) }
     LaunchedEffect(route, activeSessionId) {
-        val id = activeSessionId ?: return@LaunchedEffect
-        withContext(Dispatchers.IO) {
-            if (route == CloudRoute.BrowserView) {
+        val id = activeSessionId
+        if (id != null && route == CloudRoute.BrowserView) {
+            withContext(Dispatchers.IO) {
                 api.resumeSession(id)
                 api.pageInfo(id).onSuccess { page = it }
-            } else {
-                api.pauseSession(id)
             }
+        } else if (id != null && previousRoute == CloudRoute.BrowserView &&
+            route != CloudRoute.BrowserView
+        ) {
+            withContext(Dispatchers.IO) { api.pauseSession(id) }
         }
+        previousRoute = route
     }
 
     fun go(next: CloudRoute) {
@@ -300,8 +312,10 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
                 return@launch
             }
             val existing = withContext(Dispatchers.IO) {
+                // Reuse any live (even paused) session; entering the browser
+                // route resumes its stream. Only Ended rows are skipped.
                 api.listSessions().getOrDefault(emptyList())
-                    .firstOrNull { it.state == SessionState.Active || it.state == SessionState.Idle }
+                    .firstOrNull { it.state != SessionState.Ended }
             }
             val session = existing ?: run {
                 val launched = withContext(Dispatchers.IO) {
@@ -360,6 +374,17 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
         dialogInput = prefill
         dialogError = null
         fileDialog = dialog
+    }
+
+    /** Copies a password into the RAM-only credential store (never logged). */
+    fun stashPassword(draft: SavedServer, password: String) {
+        if (draft.authMethod != AuthMethod.Password || password.isEmpty()) return
+        val chars = password.toCharArray()
+        try {
+            EphemeralCredentials.setPassword(draft.id, chars)
+        } finally {
+            chars.fill('\u0000')
+        }
     }
 
     /** Shared tail of a successful SSH connect: latency, persist, prepare. */
@@ -648,21 +673,17 @@ fun CloudBrowserTool(tool: Tool, onBack: () -> Unit, modifier: Modifier = Modifi
                                     CloudRoute.Connect, CloudRoute.BrowserView -> ConnectScreen(
                                         initial = server,
                                         isDemo = isDemo,
-                                        onTestConnection = { api.testConnection(it) },
+                                        onTestConnection = { draft, password ->
+                                            stashPassword(draft, password)
+                                            api.testConnection(draft)
+                                        },
                                         onConnect = { draft, password ->
                                             val withId = if (draft.id.isBlank()) {
                                                 draft.copy(id = UUID.randomUUID().toString())
                                             } else {
                                                 draft
                                             }
-                                            val passwordChars = password.toCharArray()
-                                            try {
-                                                if (withId.authMethod == AuthMethod.Password) {
-                                                    EphemeralCredentials.setPassword(withId.id, passwordChars)
-                                                }
-                                            } finally {
-                                                passwordChars.fill(' ')
-                                            }
+                                            stashPassword(withId, password)
                                             val connected = api.connect(withId)
                                             connected.onSuccess { completeConnect(withId) }
                                             handleConnectFailure(withId, connected)

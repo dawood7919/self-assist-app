@@ -54,7 +54,7 @@ import kotlinx.coroutines.withContext
 fun ConnectScreen(
     initial: SavedServer?,
     isDemo: Boolean,
-    onTestConnection: (SavedServer) -> Result<Long>,
+    onTestConnection: (SavedServer, String) -> Result<Long>,
     onConnect: (SavedServer, String) -> Result<Unit>,
     onConnected: () -> Unit,
     modifier: Modifier = Modifier,
@@ -64,6 +64,10 @@ fun ConnectScreen(
     var portText by rememberSaveable { mutableStateOf(initial?.port?.toString() ?: "22") }
     var username by rememberSaveable { mutableStateOf(initial?.username.orEmpty()) }
     var keyPath by rememberSaveable { mutableStateOf(initial?.keyPath.orEmpty()) }
+    // Stable id for a brand-new server so a Test Connection and the later
+    // Connect call share one credentials slot (the RAM-only password is keyed
+    // by server id).
+    val newServerId = rememberSaveable { java.util.UUID.randomUUID().toString() }
     var password by remember { mutableStateOf("") }
     var authIndex by rememberSaveable { mutableIntStateOf(AuthMethod.entries.indexOf(initial?.authMethod ?: AuthMethod.SshKey)) }
     var protocolIndex by rememberSaveable { mutableIntStateOf(Protocol.entries.indexOf(initial?.protocol ?: Protocol.Ssh)) }
@@ -87,7 +91,7 @@ fun ConnectScreen(
     val protocol = Protocol.entries.getOrElse(protocolIndex) { initial?.protocol ?: Protocol.Ssh }
 
     fun draft(): SavedServer = SavedServer(
-        id = initial?.id ?: "",
+        id = initial?.id ?: newServerId,
         name = name.trim(),
         host = host.trim(),
         port = CloudBrowserEngine.parsePort(portText) ?: -1,
@@ -267,7 +271,7 @@ fun ConnectScreen(
                 }
                 val snapshot = draft()
                 scope.launch {
-                    val result = withContext(Dispatchers.IO) { onTestConnection(snapshot) }
+                    val result = withContext(Dispatchers.IO) { onTestConnection(snapshot, password) }
                     result.fold(
                         onSuccess = { latency ->
                             testMessage = if (isDemo) {

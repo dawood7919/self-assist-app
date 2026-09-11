@@ -133,9 +133,10 @@ fun Modifier.browserGestures(
                             // Finger up -> end of the one-finger gesture.
                             val up = change.position
                             endOneFingerDrag(up)
-                            val quick = System.currentTimeMillis() - downTime < DOUBLE_TAP_MS
+                            // A tap is a release without leaving touch slop;
+                            // speed matters only for the double-tap window.
                             val withinSlop = (up - start).getDistance() < slop * 1.6f
-                            if (!longPressFired && !movedFar && quick && withinSlop) {
+                            if (!longPressFired && !movedFar && withinSlop) {
                                 val f = fractionAt(up)
                                 val now = System.currentTimeMillis()
                                 val prev = lastTapPoint
@@ -169,7 +170,9 @@ fun Modifier.browserGestures(
                                 val dfy = CdpInput.trackpadFractionDelta(p.y - last.y, size.height.toFloat())
                                 if (dfx != 0f || dfy != 0f) gestures.onTrackpadMove(dfx, dfy)
                                 last = p
-                                movedFar = true
+                                // Small jitter under touch slop still counts
+                                // as a tap; only a real drag cancels it.
+                                if (dist > slop) movedFar = true
                             } else if (!longPressFired) {
                                 if (dist > slop && !dragging) {
                                     dragging = true

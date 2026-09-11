@@ -303,11 +303,12 @@ class RealVpsApi(
         }
 
     /**
-     * Launches a sized Chromium target and starts its screencast within a
-     * 30 s budget: ensureRunning → openTunnel → createTarget(about:blank,
-     * w×h) → connect target WS → Page.enable → navigate about:blank →
-     * startScreencast (cadence/quality from the presets) → Active row.
-     * Firefox has no CDP endpoint and fails honestly.
+     * Ensures Chrome is provisioned, then launches a sized target and starts
+     * its screencast within the timeout budget: prepareBrowser → openTunnel
+     * → createTarget(about:blank, w×h) → connect target WS → resize window →
+     * Page.enable → navigate about:blank → startScreencast (cadence/quality
+     * from the presets) → Active row. Firefox has no CDP endpoint and fails
+     * honestly.
      */
     override fun launchSession(
         serverId: String,
@@ -1170,28 +1171,49 @@ class RealVpsApi(
             }
             val session = liveOf(sessionId)
                 ?: return@safeCall Result.failure(unknownSession(sessionId))
-            val point = setCursor(session, fx, fy)
             val newZoom = synchronized(lock) {
                 val next = CdpInput.stepZoom(session.zoomPct, steps)
                 session.zoomPct = next
                 next
             }
-            // Chrome zooms around the pointer for Ctrl+wheel, exactly like
-            // the desktop browser's pinch/ctrl-wheel gesture.
-            val ticks = if (steps > 0) 1..steps else (steps..-1)
-            for (i in ticks) {
-                val deltaY = if (steps > 0) -WHEEL_TICK_PX else WHEEL_TICK_PX
-                session.cdp.enqueue(
-                    CdpMessages.mouse(
-                        CdpMessages.nextId(),
-                        "mouseWheel",
-                        point.first,
-                        point.second,
-                        deltaX = 0.0,
-                        deltaY = deltaY.toDouble(),
+            // Chrome's zoom hotkeys: Ctrl+= / Ctrl+- (one notch each). This
+            // is the sequence the real-Chrome e2e probe validates; the exact
+            // percentage is later corrected from visualViewport.scale.
+            val cdp = session.cdp
+            val count = if (steps > 0) steps else -steps
+            val zoomIn = steps > 0
+            val keyCode = if (zoomIn) 187 else 189
+            val key = if (zoomIn) "=" else "-"
+            val code = if (zoomIn) "Equal" else "Minus"
+            cdp.enqueue(
+                CdpMessages.keyDown(
+                    CdpMessages.nextId(), 17, "Control", "ControlLeft",
+                    modifiers = CdpMessages.MOD_CTRL,
+                ),
+            )
+            repeat(count) {
+                cdp.enqueue(
+                    CdpMessages.keyDown(
+                        CdpMessages.nextId(), keyCode, key, code,
                         modifiers = CdpMessages.MOD_CTRL,
-                        deltaMode = 0,
                     ),
+                )
+                cdp.enqueue(
+                    CdpMessages.keyUp(
+                        CdpMessages.nextId(), keyCode, key, code,
+                        modifiers = CdpMessages.MOD_CTRL,
+                    ),
+                )
+            }
+            val upId = CdpMessages.nextId()
+            val released = cdp.sendAndAwait(
+                CdpMessages.keyUp(upId, 17, "Control", "ControlLeft"),
+                upId,
+                IO_TIMEOUT_MS,
+            )
+            if (released.isFailure) {
+                return@safeCall Result.failure(
+                    released.exceptionOrNull() ?: Exception("Could not change zoom"),
                 )
             }
             touchLive(sessionId)
@@ -1211,10 +1233,12 @@ class RealVpsApi(
                 ),
             )
             val up0 = CdpMessages.nextId()
+            // Digit0 shortcut is dispatched as a raw (non-text) key.
             session.cdp.enqueue(
                 CdpMessages.keyDown(
                     up0, 48, "0", "Digit0",
                     modifiers = CdpMessages.MOD_CTRL,
+                    eventType = "rawKeyDown",
                 ),
             )
             session.cdp.enqueue(
@@ -1809,6 +1833,5 @@ class RealVpsApi(
         private const val ECHO_TOKEN = "orbit-ok"
         private const val ECHO_PROBE = "echo orbit-ok"
         private const val CONNECTION_LABEL = "SSH tunnel"
-        private const val WHEEL_TICK_PX = 120
     }
 }

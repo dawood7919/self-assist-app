@@ -126,6 +126,18 @@ class CdpMessagesInputTest {
     }
 
     @Test
+    fun screencastMetadataReadsNestedDeviceSize() {
+        val json = """{"method":"Page.screencastFrame","params":{"sessionId":3,
+            "data":"aGk=","metadata":{"pageScaleFactor":1,
+            "deviceSize":{"width":1920,"height":1080},
+            "scrollOffset":{"x":0,"y":120}}}}"""
+        val frame = CdpMessages.parseEvent(json) as CdpEvent.ScreencastFrame
+        assertEquals(1920, frame.deviceWidth)
+        assertEquals(1080, frame.deviceHeight)
+        assertEquals(120.0, frame.scrollOffsetY, 0.0)
+    }
+
+    @Test
     fun loadingEventsMapToPageEvents() {
         val start = CdpMessages.parseEvent("""{"method":"Page.frameStartedLoading","params":{}}""")
         val stop = CdpMessages.parseEvent("""{"method":"Page.frameStoppedLoading","params":{}}""")

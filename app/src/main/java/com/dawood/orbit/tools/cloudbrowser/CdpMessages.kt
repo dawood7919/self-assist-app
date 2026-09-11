@@ -145,9 +145,10 @@ object CdpMessages {
         code: String,
         text: String? = null,
         modifiers: Int? = null,
+        eventType: String = "keyDown",
     ): String {
         val params = JSONObject()
-            .put("type", "keyDown")
+            .put("type", eventType)
             .put("windowsVirtualKeyCode", windowsCode)
             .put("key", key)
             .put("code", code)
@@ -311,14 +312,23 @@ object CdpMessages {
                     val data = params.optString("data", "")
                     if (sessionId < 0 || data.isEmpty()) return null
                     val meta = params.optJSONObject("metadata")
+                    // CDP nests the viewport size and scroll offset inside
+                    // metadata.deviceSize / metadata.scrollOffset; fall back to
+                    // flat keys for robustness across Chrome revisions.
+                    val deviceSize = meta?.optJSONObject("deviceSize")
+                    val scroll = meta?.optJSONObject("scrollOffset")
                     CdpEvent.ScreencastFrame(
                         sessionId = sessionId,
                         dataB64 = data,
-                        deviceWidth = meta?.optInt("deviceWidth", 0) ?: 0,
-                        deviceHeight = meta?.optInt("deviceHeight", 0) ?: 0,
+                        deviceWidth = deviceSize?.optInt("width")
+                            ?: meta?.optInt("deviceWidth", 0) ?: 0,
+                        deviceHeight = deviceSize?.optInt("height")
+                            ?: meta?.optInt("deviceHeight", 0) ?: 0,
                         pageScaleFactor = meta?.optDouble("pageScaleFactor", 1.0) ?: 1.0,
-                        scrollOffsetX = meta?.optDouble("scrollOffsetX", 0.0) ?: 0.0,
-                        scrollOffsetY = meta?.optDouble("scrollOffsetY", 0.0) ?: 0.0,
+                        scrollOffsetX = scroll?.optDouble("x")
+                            ?: meta?.optDouble("scrollOffsetX", 0.0) ?: 0.0,
+                        scrollOffsetY = scroll?.optDouble("y")
+                            ?: meta?.optDouble("scrollOffsetY", 0.0) ?: 0.0,
                     )
                 }
                 "Page.frameNavigated" -> {

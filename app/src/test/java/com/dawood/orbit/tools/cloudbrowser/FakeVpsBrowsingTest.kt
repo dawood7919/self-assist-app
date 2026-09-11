@@ -18,7 +18,7 @@ class FakeVpsBrowsingTest {
         host = "demo.example",
         port = 22,
         username = "ubuntu",
-        protocol = Protocol.SSH,
+        protocol = Protocol.Ssh,
         authMethod = AuthMethod.Password,
     )
     private val sessionId = "demo-session-01"

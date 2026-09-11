@@ -37,9 +37,10 @@ class CdpInputTest {
 
     @Test
     fun qualityTriplesMatchSpec() {
-        assertEquals(Triple(800, 30, 4), CdpInput.screencastParams(Quality.Low))
-        assertEquals(Triple(1280, 60, 2), CdpInput.screencastParams(Quality.Balanced))
-        assertEquals(Triple(1920, 75, 1), CdpInput.screencastParams(Quality.High))
-        assertEquals(Triple(1920, 80, 1), CdpInput.screencastParams(Quality.Ultra))
+        // Triple(maxWidth, jpegQuality, everyNthFrame)
+        assertEquals(Triple(960, 40, 2), CdpInput.screencastParams(Quality.Low))
+        assertEquals(Triple(1280, 60, 1), CdpInput.screencastParams(Quality.Balanced))
+        assertEquals(Triple(1920, 72, 1), CdpInput.screencastParams(Quality.High))
+        assertEquals(Triple(1920, 82, 1), CdpInput.screencastParams(Quality.Ultra))
     }
 }
