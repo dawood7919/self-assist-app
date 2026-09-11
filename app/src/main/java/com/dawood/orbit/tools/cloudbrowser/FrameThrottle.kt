@@ -14,9 +14,9 @@ package com.dawood.orbit.tools.cloudbrowser
  * assumptions are made; the check itself never blocks.
  */
 class FrameThrottle(
-    val maxFps: Int = 5,
-    val minIntervalMs: Long = 200,
-    val maxBytes: Int = 150_000,
+    val maxFps: Int = 24,
+    val minIntervalMs: Long = 0,
+    val maxBytes: Int = 4_000_000,
 ) {
 
     @Volatile

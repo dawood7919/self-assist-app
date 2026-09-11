@@ -3,7 +3,11 @@ package com.dawood.orbit.tools.cloudbrowser.screens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
@@ -17,6 +21,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -40,8 +45,9 @@ import kotlinx.coroutines.withContext
  * VPS connection form.
  *
  * Exact visual copy of mockup slot 2. Owns every field in [rememberSaveable]
- * so rotation never discards input — except the password, which stays in a
- * RAM-only [remember] so it is never saved, logged, or persisted. Validation
+ * so rotation never discards input. The password can optionally be
+ * persisted encrypted on-device (Android Keystore) when the user opts in;
+ * it is never logged. Validation
  * runs through [CloudBrowserEngine.validateServer] with per-field errors.
  * [onTestConnection] and [onConnect] are supplied by the tool, which calls
  * the blocking [VpsApi] directly — this screen never touches the API. Only
@@ -54,9 +60,12 @@ import kotlinx.coroutines.withContext
 fun ConnectScreen(
     initial: SavedServer?,
     isDemo: Boolean,
-    onTestConnection: (SavedServer) -> Result<Long>,
-    onConnect: (SavedServer, String) -> Result<Unit>,
+    onTestConnection: (SavedServer, String, Boolean) -> Result<Long>,
+    onConnect: (SavedServer, String, Boolean) -> Result<Unit>,
     onConnected: () -> Unit,
+    // Returns the encrypted-on-device password previously saved for this
+    // server, so returning users do not retype it (null when none).
+    onLoadSavedPassword: (SavedServer) -> String?,
     modifier: Modifier = Modifier,
 ) {
     var name by rememberSaveable { mutableStateOf(initial?.name.orEmpty()) }
@@ -64,7 +73,14 @@ fun ConnectScreen(
     var portText by rememberSaveable { mutableStateOf(initial?.port?.toString() ?: "22") }
     var username by rememberSaveable { mutableStateOf(initial?.username.orEmpty()) }
     var keyPath by rememberSaveable { mutableStateOf(initial?.keyPath.orEmpty()) }
+    // Stable id for a brand-new server so a Test Connection and the later
+    // Connect call share one credentials slot (the RAM-only password is keyed
+    // by server id).
+    val newServerId = rememberSaveable { java.util.UUID.randomUUID().toString() }
     var password by remember { mutableStateOf("") }
+    // Default ON: the user explicitly asked for logins to be remembered.
+    // The password is stored encrypted with the Android Keystore.
+    var savePassword by rememberSaveable { mutableStateOf(true) }
     var authIndex by rememberSaveable { mutableIntStateOf(AuthMethod.entries.indexOf(initial?.authMethod ?: AuthMethod.SshKey)) }
     var protocolIndex by rememberSaveable { mutableIntStateOf(Protocol.entries.indexOf(initial?.protocol ?: Protocol.Ssh)) }
     var errors by remember { mutableStateOf(emptyMap<String, String>()) }
@@ -81,13 +97,17 @@ fun ConnectScreen(
         keyPath = initial?.keyPath.orEmpty()
         authIndex = AuthMethod.entries.indexOf(initial?.authMethod ?: AuthMethod.SshKey)
         protocolIndex = Protocol.entries.indexOf(initial?.protocol ?: Protocol.Ssh)
+        password = initial
+            ?.takeIf { it.authMethod == AuthMethod.Password }
+            ?.let { withContext(Dispatchers.IO) { onLoadSavedPassword(it) } }
+            .orEmpty()
     }
 
     val auth = AuthMethod.entries.getOrElse(authIndex) { initial?.authMethod ?: AuthMethod.SshKey }
     val protocol = Protocol.entries.getOrElse(protocolIndex) { initial?.protocol ?: Protocol.Ssh }
 
     fun draft(): SavedServer = SavedServer(
-        id = initial?.id ?: "",
+        id = initial?.id ?: newServerId,
         name = name.trim(),
         host = host.trim(),
         port = CloudBrowserEngine.parsePort(portText) ?: -1,
@@ -216,7 +236,18 @@ fun ConnectScreen(
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             )
-            CloudSmall(text = "The password is used once to connect and never stored.")
+            CloudClickableToggle(
+                checked = savePassword,
+                onToggle = { savePassword = it },
+                label = "Save password securely on this device",
+            )
+            CloudSmall(
+                text = if (savePassword) {
+                    "Encrypted with the Android Keystore; used to reconnect automatically."
+                } else {
+                    "Used once to connect and not kept on the device."
+                },
+            )
         }
 
         CloudLabel(text = "Connection Protocol")
@@ -267,7 +298,7 @@ fun ConnectScreen(
                 }
                 val snapshot = draft()
                 scope.launch {
-                    val result = withContext(Dispatchers.IO) { onTestConnection(snapshot) }
+                    val result = withContext(Dispatchers.IO) { onTestConnection(snapshot, password, savePassword) }
                     result.fold(
                         onSuccess = { latency ->
                             testMessage = if (isDemo) {
@@ -287,7 +318,7 @@ fun ConnectScreen(
                 if (!validate()) return@CloudPrimaryButton
                 val snapshot = draft()
                 scope.launch {
-                    val result = withContext(Dispatchers.IO) { onConnect(snapshot, password) }
+                    val result = withContext(Dispatchers.IO) { onConnect(snapshot, password, savePassword) }
                     result.fold(
                         onSuccess = {
                             password = ""
@@ -320,5 +351,33 @@ private fun TestResultCard(message: String, isDemo: Boolean) {
             )
             CloudSmall(text = message)
         }
+    }
+}
+
+
+/**
+ * Small tappable checkbox row for the "save password" choice, drawn with
+ * the cloud palette (no Material Checkbox dependency needed).
+ */
+@Composable
+private fun CloudClickableToggle(
+    checked: Boolean,
+    onToggle: (Boolean) -> Unit,
+    label: String,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(
+                role = Role.Checkbox,
+                onClickLabel = label,
+                onClick = { onToggle(!checked) },
+            )
+            .padding(vertical = CloudSpacing.PadSm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CloudSmall(text = if (checked) "☑" else "☐")
+        Spacer(Modifier.width(CloudSpacing.PadSm))
+        CloudSmall(text = label, color = CloudColors.Text)
     }
 }

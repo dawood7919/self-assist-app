@@ -28,18 +28,68 @@ class CdpInputTest {
     }
 
     @Test
-    fun remoteSizesMatchPresets() {
-        assertEquals(Pair(1280, 720), CdpInput.remoteSize(Resolution.P720))
-        assertEquals(Pair(1920, 1080), CdpInput.remoteSize(Resolution.P1080))
-        assertEquals(Pair(2560, 1440), CdpInput.remoteSize(Resolution.P1440))
-        assertEquals(Pair(1280, 720), CdpInput.remoteSize(Resolution.Auto))
+    fun hostWindowStaysDesktopSized() {
+        // The OS window behind the emulated viewport is always desktop-wide;
+        // the mobile viewport comes from device-metrics emulation.
+        assertEquals(1280, CdpInput.remoteSize(Resolution.P720).first)
+        assertEquals(1366, CdpInput.remoteSize(Resolution.Auto).first)
+    }
+
+    @Test
+    fun mobileGeometryFillsPhoneContentBox() {
+        // 1080x2200 physical panel at density 2.75 -> ~393x800 CSS at dsf 2.75.
+        val geo = CdpInput.emulatedViewport(1080, 2200, 2.75f, BrowserMode.Mobile)
+        assertEquals(2.75, geo.deviceScaleFactor, 0.001)
+        assertEquals(393, geo.cssWidth)
+        assertEquals(800, geo.cssHeight)
+        // A coded frame must stay wider than it is tall only in desktop.
+        val mobileFrame = CdpInput.frameSize(geo, Quality.Balanced)
+        assertEquals(1081, mobileFrame.first)
+    }
+
+    @Test
+    fun desktopGeometryIsRealDesktopViewport() {
+        val geo = CdpInput.emulatedViewport(1080, 2200, 2.75f, BrowserMode.Desktop)
+        assertEquals(1.0, geo.deviceScaleFactor, 0.001)
+        assertEquals(CdpInput.DESKTOP_CSS_WIDTH, geo.cssWidth)
+        // Height follows the phone aspect so the frame still fills the box.
+        assertEquals(2607, geo.cssHeight)
+    }
+
+    @Test
+    fun frameCapsBandwidth() {
+        val geo = CdpInput.emulatedViewport(1440, 3000, 3.5f, BrowserMode.Mobile)
+        val (w, _) = CdpInput.frameSize(geo, Quality.Low)
+        assert(w <= 960)
+    }
+
+    @Test
+    fun remoteCssPointHandlesPinchScaleAndScroll() {
+        // Centre tap, unzoomed -> centre CSS point.
+        val p0 = CdpInput.remoteCssPoint(0.5f, 0.5f, 390, 800)
+        assertEquals(195.0, p0.first, 0.1)
+        assertEquals(400.0, p0.second, 0.1)
+        // At pinch scale 2, scrolled down 300: the visible window is half as
+        // wide in CSS and starts at scroll offset.
+        val p1 = CdpInput.remoteCssPoint(0f, 0f, 390, 800, scale = 2.0, scrollY = 300.0)
+        assertEquals(0.0, p1.first, 0.1)
+        assertEquals(300.0, p1.second, 0.1)
+        val p2 = CdpInput.remoteCssPoint(1f, 1f, 390, 800, scale = 2.0, scrollY = 300.0)
+        assertEquals(195.0, p2.first, 0.1)
+        assertEquals(700.0, p2.second, 0.1)
+    }
+
+    @Test
+    fun userAgentsMatchModes() {
+        assert(CdpInput.MOBILE_USER_AGENT.contains("Android"))
+        assert(CdpInput.MOBILE_USER_AGENT.contains("Mobile"))
+        assert(!CdpInput.DESKTOP_USER_AGENT.contains("Mobile"))
     }
 
     @Test
     fun qualityTriplesMatchSpec() {
-        assertEquals(Triple(800, 30, 4), CdpInput.screencastParams(Quality.Low))
-        assertEquals(Triple(1280, 60, 2), CdpInput.screencastParams(Quality.Balanced))
-        assertEquals(Triple(1920, 75, 1), CdpInput.screencastParams(Quality.High))
-        assertEquals(Triple(1920, 80, 1), CdpInput.screencastParams(Quality.Ultra))
+        // Triple(jpegQuality, everyNthFrame, capWidth)
+        assertEquals(Triple(46, 2, 960), CdpInput.screencastTuning(Quality.Low))
+        assertEquals(Triple(88, 1, 1920), CdpInput.screencastTuning(Quality.Ultra))
     }
 }

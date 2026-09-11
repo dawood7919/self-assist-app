@@ -145,6 +145,89 @@ class FakeVpsApi : VpsApi {
         return Result.success(Unit)
     }
 
+    override fun prepareBrowser(onStage: (String) -> Unit): Result<Unit> {
+        // DEMO: nothing to install; one canned stage line.
+        onStage("Demo: browser ready")
+        return Result.success(Unit)
+    }
+
+    // DEMO per-session browsing state so the interactive view has something
+    // honest to render without a real browser.
+    private val pages = mutableMapOf<String, PageInfo>()
+    private var demoZoom = mutableMapOf<String, Int>()
+
+    private fun pageOf(id: String): PageInfo =
+        pages.getOrPut(id) {
+            PageInfo(url = "about:blank", title = "Demo page", zoomPct = 100)
+        }
+
+    override fun navigate(id: String, rawInput: String): Result<PageInfo> {
+        if (sessions.none { it.id == id }) return Result.failure(IllegalArgumentException("Unknown session id: $id"))
+        val url = CdpInput.normalizeAddress(rawInput)
+            ?: return Result.failure(IllegalArgumentException("Enter a web address or search terms"))
+        pages[id] = pageOf(id).copy(url = url, title = url.substringAfter("://").substringBefore('/'), loading = false)
+        return Result.success(pages[id]!!)
+    }
+
+    override fun reload(id: String): Result<Unit> = okSession(id)
+    override fun stopLoading(id: String): Result<Unit> = okSession(id)
+    override fun goBack(id: String): Result<Unit> = okSession(id)
+    override fun goForward(id: String): Result<Unit> = okSession(id)
+
+    override fun pageInfo(id: String): Result<PageInfo> {
+        if (sessions.none { it.id == id }) return Result.failure(IllegalArgumentException("Unknown session id: $id"))
+        return Result.success(pageOf(id).copy(zoomPct = demoZoom[id] ?: 100))
+    }
+
+    override fun pointerMove(id: String, fx: Float, fy: Float): Result<Unit> = okSession(id)
+    override fun pointerMoveRelative(id: String, dfx: Float, dfy: Float): Result<Unit> = okSession(id)
+    override fun pointerPress(id: String, fx: Float, fy: Float, button: RemoteMouseButton): Result<Unit> = okSession(id)
+    override fun pointerRelease(id: String, fx: Float, fy: Float, button: RemoteMouseButton): Result<Unit> = okSession(id)
+    override fun click(
+        id: String,
+        fx: Float,
+        fy: Float,
+        button: RemoteMouseButton,
+        clickCount: Int,
+    ): Result<Unit> = okSession(id)
+
+    override fun wheel(
+        id: String,
+        fx: Float,
+        fy: Float,
+        deltaXPx: Double,
+        deltaYPx: Double,
+        ctrlKey: Boolean,
+    ): Result<Unit> = okSession(id)
+
+    override fun typeText(id: String, text: String): Result<Unit> = okSession(id)
+    override fun pressKey(id: String, label: String): Result<Unit> = okSession(id)
+
+    override fun zoom(id: String, steps: Int, fx: Float, fy: Float): Result<Int> {
+        if (sessions.none { it.id == id }) return Result.failure(IllegalArgumentException("Unknown session id: $id"))
+        val next = CdpInput.stepZoom(demoZoom[id] ?: 100, steps)
+        demoZoom[id] = next
+        return Result.success(next)
+    }
+
+    override fun resetZoom(id: String): Result<Int> {
+        if (sessions.none { it.id == id }) {
+            return Result.failure(IllegalArgumentException("Unknown session id: $id"))
+        }
+        demoZoom[id] = 100
+        return Result.success(100)
+    }
+
+    override fun applyStream(id: String, quality: Quality, frameRate: Int): Result<Unit> = okSession(id)
+    override fun saveScreenshot(id: String): Result<Unit> = okSession(id)
+
+    private fun okSession(id: String): Result<Unit> =
+        if (sessions.any { it.id == id }) {
+            Result.success(Unit)
+        } else {
+            Result.failure(IllegalArgumentException("Unknown session id: $id"))
+        }
+
     // ------------------------------------------------------------------
     // Sessions
     // ------------------------------------------------------------------
@@ -160,6 +243,10 @@ class FakeVpsApi : VpsApi {
         quality: Quality,
         frameRate: Int,
         timeoutSecs: Int,
+        mode: BrowserMode,
+        cssWidth: Int,
+        cssHeight: Int,
+        deviceScaleFactor: Double,
     ): Result<BrowserSession> {
         val session = BrowserSession(
             // DEMO: sequential ids keep launches deterministic across test runs.
@@ -171,12 +258,48 @@ class FakeVpsApi : VpsApi {
             quality = quality,
             frameRate = frameRate,
             state = SessionState.Active,
+            mode = mode,
             startedAtEpochMs = System.currentTimeMillis(),
             lastSeenEpochMs = System.currentTimeMillis(),
         )
         sessions.add(session)
         return Result.success(session)
     }
+
+    /** Test/UI surface: ids whose mode was last switched. */
+    val modeSwitches = mutableListOf<Pair<String, BrowserMode>>()
+
+    override fun setMode(id: String, mode: BrowserMode): Result<Unit> {
+        val session = sessions.firstOrNull { it.id == id }
+            ?: return Result.failure(IllegalArgumentException("Unknown session id: $id"))
+        replace(session.copy(mode = mode, lastSeenEpochMs = System.currentTimeMillis()))
+        modeSwitches.add(id to mode)
+        return Result.success(Unit)
+    }
+
+    override fun applyViewport(id: String, geometry: ViewportGeometry): Result<Unit> =
+        if (sessions.any { it.id == id }) Result.success(Unit)
+        else Result.failure(IllegalArgumentException("Unknown session id: $id"))
+
+    /** DEMO record of every dispatched touch sequence, for UI unit tests. */
+    val touchEvents = mutableListOf<Triple<String, String, List<TouchPointFraction>>>()
+
+    override fun touchStart(id: String, points: List<TouchPointFraction>): Result<Unit> =
+        recordTouch(id, "touchStart", points)
+
+    override fun touchMove(id: String, points: List<TouchPointFraction>): Result<Unit> =
+        recordTouch(id, "touchMove", points)
+
+    override fun touchEnd(id: String, points: List<TouchPointFraction>): Result<Unit> =
+        recordTouch(id, "touchEnd", points)
+
+    private fun recordTouch(id: String, type: String, points: List<TouchPointFraction>): Result<Unit> =
+        if (sessions.any { it.id == id }) {
+            touchEvents.add(Triple(id, type, points))
+            Result.success(Unit)
+        } else {
+            Result.failure(IllegalArgumentException("Unknown session id: $id"))
+        }
 
     override fun pauseSession(id: String): Result<Unit> {
         val session = sessions.firstOrNull { it.id == id }

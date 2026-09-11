@@ -68,8 +68,8 @@ fun NewSessionScreen(
     val profileOptions = listOf("New", "Guest", "Persistent")
     val resolutionOptions = listOf(Resolution.P720, Resolution.P1080, Resolution.P1440)
     val resolutionLabels = listOf("1280×720", "1920×1080", "2560×1440")
-    val qualityOptions = listOf(Quality.Low, Quality.Balanced, Quality.High)
-    val qualityLabels = listOf("Saver", "Balanced", "High")
+    val qualityOptions = listOf(Quality.Low, Quality.Balanced, Quality.High, Quality.Ultra)
+    val qualityLabels = listOf("Saver", "Balanced", "High", "Max")
     val timeoutOptions = listOf(1800, 3600, 14400, 0)
     val timeoutLabels = listOf("30m", "1h", "4h", "Never")
 

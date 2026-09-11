@@ -11,11 +11,16 @@ import com.jcraft.jsch.JSch
 import com.jcraft.jsch.JSchException
 import com.jcraft.jsch.Session
 import com.jcraft.jsch.SftpException
+import com.jcraft.jsch.SocketFactory as JSchSocketFactory
 import com.jcraft.jsch.UserInfo
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
 import java.net.ConnectException
+import java.net.InetSocketAddress
 import java.net.NoRouteToHostException
+import java.net.Socket
 import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -64,7 +69,18 @@ class SshManager(context: Context) {
     private val lock = ReentrantLock()
     private var session: Session? = null
     private var jsch: JSch? = null
+    private var serverId: String? = null
+    private var lastServer: SavedServer? = null
     private val tunnel = AtomicReference<ActiveTunnel?>(null)
+
+    /**
+     * Persists explicit user approval of the host key fingerprint for
+     * [host]:[port]. Subsequent [connect] calls then pass TOFU verification.
+     * [sha256Base64] is the standard OpenSSH SHA256:<base64> fingerprint.
+     */
+    fun trustHostKey(host: String, port: Int, sha256Base64: String) {
+        hostKeyStore.trust(host, port, sha256Base64)
+    }
 
     /**
      * Blocking: opens the control connection and authenticates.
@@ -88,6 +104,7 @@ class SshManager(context: Context) {
         lock.lock()
         try {
             dropLocked()
+            this.serverId = server.id
             val j = JSch()
             j.hostKeyRepository = TofuRepository(server.host, server.port)
             val s: Session = try {
@@ -102,6 +119,14 @@ class SshManager(context: Context) {
                 clearIdentitiesQuietly(j)
                 return prepared
             }
+            // Our factory enforces the tight dial timeout while leaving the
+            // post-auth read timeout unbounded: quiet apt/dpkg stretches and
+            // snap probes must never silently kill the long-lived control
+            // connection (which previously surfaced as "Not connected" on
+            // the next command). exec() enforces its own wall deadlines.
+            s.setSocketFactory(OrbitSocketFactory)
+            s.setServerAliveInterval(SERVER_ALIVE_INTERVAL_MS)
+            s.setServerAliveCountMax(3)
             s.setTimeout(CONNECT_TIMEOUT_MS)
             try {
                 s.connect(CONNECT_TIMEOUT_MS)
@@ -112,6 +137,7 @@ class SshManager(context: Context) {
             }
             session = s
             jsch = j
+            lastServer = server
             return Result.success(Unit)
         } finally {
             lock.unlock()
@@ -125,6 +151,9 @@ class SshManager(context: Context) {
     fun disconnect(): Result<Unit> {
         lock.lock()
         try {
+            // An explicit disconnect must not be transparently undone by the
+            // auto-heal in liveSession(); forget the reusable server.
+            lastServer = null
             dropLocked()
             return Result.success(Unit)
         } finally {
@@ -154,19 +183,42 @@ class SshManager(context: Context) {
     }
 
     /**
+     * Returns the live control [Session], transparently rebuilding it ONCE
+     * from the last successful [SavedServer] when the transport dropped (a
+     * mobile network switch, an sshd idle kill, or a long silent command
+     * under a short socket read timeout). The RAM-only credential is retained
+     * for the session, so re-auth needs no UI. Returns null only when there
+     * is nothing to rebuild from or re-auth fails. Callers must NOT hold
+     * [lock] (this calls [connect], which takes it).
+     */
+    private fun liveSession(): Session? {
+        // Serialise concurrent heal attempts; connect() re-enters this same
+        // reentrant lock, so two coroutines racing a dropped connection end
+        // up sharing one rebuilt session instead of disconnecting each other.
+        lock.lock()
+        try {
+            val current = session
+            if (current != null && isSessionLive(current)) {
+                return current
+            }
+            val known = lastServer ?: return null
+            if (connect(known).isFailure) {
+                return null
+            }
+            return session
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    /**
      * Blocking: runs [cmd] and returns stdout.
      * Must be called on Dispatchers.IO. Fails when not connected, on timeout
      * ([timeoutMs] default 10_000), or on non-zero remote exit status.
      */
     fun exec(cmd: String, timeoutMs: Long = 10_000): Result<String> {
-        val s: Session?
-        lock.lock()
-        try {
-            s = session
-        } finally {
-            lock.unlock()
-        }
-        if (s == null || !isSessionLive(s)) {
+        val s = liveSession()
+        if (s == null) {
             return Result.failure(Exception("Not connected — call connect() first."))
         }
         var channel: ChannelExec? = null
@@ -232,19 +284,51 @@ class SshManager(context: Context) {
     }
 
     /**
+     * Blocking: runs a (potentially multi-line) shell [script] as root on the
+     * remote node. When the account has passwordless sudo the script runs
+     * directly; otherwise the one-shot SSH password is fed to sudo's stdin
+     * remotely. The password never touches disk and travels only inside the
+     * encrypted SSH channel; it is quoted for the shell. Used by first-time
+     * node provisioning (installing Chrome). Call on Dispatchers.IO.
+     */
+    fun execRoot(script: String, timeoutMs: Long = 180_000L): Result<String> {
+        val id = serverId
+        val password = id?.let { EphemeralCredentials.peekPassword(it) }
+        var copy: CharArray? = null
+        try {
+            copy = password
+            val remote = buildString {
+                append("export DEBIAN_FRONTEND=noninteractive; ")
+                append("if sudo -n true 2>/dev/null; then ")
+                append("asroot() { sudo -n \"\$@\"; }; ")
+                append("else ")
+                if (copy != null) {
+                    append("ORBIT_SUDO_PW=")
+                    append(shellSingleQuote(copy.concatToString()))
+                    append("; ")
+                }
+                append("asroot() { printf '%s\\n' \"\$ORBIT_SUDO_PW\" | sudo -S -p '' \"\$@\"; }; ")
+                append("fi; ")
+                append(script)
+            }
+            return exec(remote, timeoutMs)
+        } finally {
+            copy?.fill('\u0000')
+        }
+    }
+
+    /** Wraps [value] in single quotes safe for a POSIX shell. */
+    private fun shellSingleQuote(value: String): String =
+        "'" + value.replace("'", "'\"'\"'") + "'"
+
+    /**
      * Blocking: opens an SFTP channel on the current connection.
      * Must be called on Dispatchers.IO. The CALLER owns and must close the
      * returned [SshSftp] (it holds a channel on this connection).
      */
     fun sftp(): Result<SshSftp> {
-        val s: Session?
-        lock.lock()
-        try {
-            s = session
-        } finally {
-            lock.unlock()
-        }
-        if (s == null || !isSessionLive(s)) {
+        val s = liveSession()
+        if (s == null) {
             return Result.failure(Exception("Not connected — call connect() first."))
         }
         return try {
@@ -271,6 +355,12 @@ class SshManager(context: Context) {
      * it already targets [remotePort]. Returns the local port number.
      */
     fun openTunnel(remotePort: Int = 9222): Result<Int> {
+        // Heal a dropped control connection BEFORE taking the lock; doing it
+        // under the lock would re-enter connect()/dropLocked() on this thread.
+        val healed = liveSession()
+        if (healed == null) {
+            return Result.failure(Exception("Not connected — call connect() first."))
+        }
         lock.lock()
         try {
             val s = session
@@ -392,7 +482,7 @@ class SshManager(context: Context) {
         }
         var passphrase: CharArray? = null
         try {
-            passphrase = EphemeralCredentials.consumePassword(server.id)
+            passphrase = EphemeralCredentials.peekPassword(server.id)
             try {
                 if (passphrase == null || passphrase.isEmpty()) {
                     jsch.addIdentity(keyPath)
@@ -414,7 +504,7 @@ class SshManager(context: Context) {
     private fun preparePasswordAuth(s: Session, server: SavedServer): Result<Unit> {
         var password: CharArray? = null
         try {
-            password = EphemeralCredentials.consumePassword(server.id)
+            password = EphemeralCredentials.peekPassword(server.id)
             if (password == null) {
                 return Result.failure(
                     Exception(
@@ -703,8 +793,31 @@ class SshManager(context: Context) {
         val remotePort: Int,
     )
 
+    /**
+     * JSch socket factory for the control connection. The TCP DIAL is tight
+     * (unreachable hosts fail in 10 s, matching the L0 contract), but the
+     * post-auth read timeout is infinite: a long silent apt/dpkg phase or a
+     * snap probe must not tear down the SSH session, which previously made
+     * the very next command fail with "Not connected — call connect() first"
+     * mid-provisioning. Each [exec] still enforces its own wall-clock budget.
+     */
+    private object OrbitSocketFactory : JSchSocketFactory {
+        override fun createSocket(host: String?, port: Int): Socket {
+            val socket = Socket()
+            socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
+            socket.tcpNoDelay = true
+            socket.soTimeout = 0
+            return socket
+        }
+
+        override fun getInputStream(socket: Socket): InputStream = socket.getInputStream()
+
+        override fun getOutputStream(socket: Socket): OutputStream = socket.getOutputStream()
+    }
+
     companion object {
         private const val CONNECT_TIMEOUT_MS = 10_000
+        private const val SERVER_ALIVE_INTERVAL_MS = 30_000
 
         private const val KEY_REJECTED_PREFIX =
             "SSH key rejected — check key path and that the public key is in ~/.ssh/authorized_keys."

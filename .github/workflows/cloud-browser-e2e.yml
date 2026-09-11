@@ -1,0 +1,274 @@
+name: Cloud Browser E2E probe
+
+# Validates the exact CDP message sequence the app's RealVpsApi uses against
+# REAL Chrome (not a mock): target creation, window bounds, screencast frame
+# flow, mouse / wheel / keyboard input, navigation history, and zoom semantics.
+#
+# Job "runner-chrome" runs against Chrome installed on the runner.
+# Job "fresh-ubuntu" runs provision.sh inside a pristine ubuntu:22.04
+# container as a non-root sudo user with a PASSWORD (the same situation as a
+# fresh cloud VPS), proving the in-app auto-provisioning path end to end.
+#
+# A live-VPS job is defined for manual dispatch; the SSH password is supplied
+# per-run as an input (never committed) and masked in logs.
+
+on:
+  push:
+    branches: ["arena/01a08ed6-self-assist-app"]
+    paths:
+      - ".github/e2e/**"
+      - ".github/workflows/cloud-browser-e2e.yml"
+  workflow_dispatch:
+    inputs:
+      vps_host:
+        description: "VPS host (empty skips the live-VPS job)"
+        required: false
+        default: ""
+      vps_user:
+        description: "VPS username"
+        required: false
+        default: "ubuntu"
+      vps_password:
+        description: "VPS SSH password (masked in logs, never committed)"
+        required: false
+        default: ""
+      real_site:
+        description: "Site to load in the remote browser"
+        required: false
+        default: "https://www.example.com/"
+
+jobs:
+  runner-chrome:
+    name: Real Chrome on runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python deps
+        run: python3 -m pip install --quiet websocket-client
+      - name: Start headless Chrome
+        run: |
+          pkill -f 'remote-debugging-port=9222' || true
+          rm -rf /tmp/orbit-e2e-profile
+          google-chrome --version
+          google-chrome --headless=new --remote-debugging-port=9222 \
+            --remote-debugging-address=127.0.0.1 --remote-allow-origins='*' \
+            --no-sandbox --disable-gpu --disable-dev-shm-usage \
+            --user-data-dir=/tmp/orbit-e2e-profile --window-size=1280,720 \
+            about:blank >/tmp/chrome.log 2>&1 &
+          for i in $(seq 1 40); do
+            curl -fsS http://127.0.0.1:9222/json/version && break || sleep 1
+          done
+      - name: Start headful Chrome under Xvfb (DSF capture diagnostics)
+        run: |
+          # Headful chrome (no --headless) under Xvfb honors deviceScaleFactor
+          # in the screencast capture pipeline; the probe samples it on :9333.
+          which Xvfb >/dev/null 2>&1 || sudo apt-get install -y --no-install-recommends xvfb
+          Xvfb :99 -screen 0 1400x2600x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
+          for i in $(seq 1 20); do [ -e /tmp/.X11-unix/X99 ] && break || sleep 1; done
+          rm -rf /tmp/orbit-e2e-profile-xvfb
+          DISPLAY=:99 google-chrome --remote-debugging-port=9333 \
+            --remote-debugging-address=127.0.0.1 --remote-allow-origins='*' \
+            --no-sandbox --disable-gpu --disable-dev-shm-usage \
+            --no-first-run --no-default-browser-check \
+            --user-data-dir=/tmp/orbit-e2e-profile-xvfb --window-size=1280,2607 \
+            about:blank >/tmp/chrome-xvfb.log 2>&1 &
+          for i in $(seq 1 40); do
+            curl -fsS http://127.0.0.1:9333/json/version && break || sleep 1
+          done
+      - name: Run CDP probe
+        run: |
+          mkdir -p artifacts/runner
+          set +e
+          python3 .github/e2e/cloud_e2e.py --base http://127.0.0.1:9222 \
+            --out artifacts/runner --site "${{ github.event.inputs.real_site || 'https://www.example.com/' }}" \
+            2>&1 | tee artifacts/runner/probe.out
+          RC=${PIPESTATUS[0]}
+          # Annotation budget is tiny: FAILs as errors, everything else
+          # consolidated into single-line notices.
+          grep -E '^\[FAIL\]' artifacts/runner/probe.out | while IFS= read -r line; do
+            echo "::error::$line"
+          done
+          grep -E '^\[PASS\]' artifacts/runner/probe.out | tr '\n' '|' | xargs -I{} echo "::notice::PASSES: {}"
+          if [ $RC -ne 0 ]; then
+            tail -30 artifacts/runner/probe.out | tr '\n' '~' | xargs -I{} echo "::notice::TAIL: {}"
+          fi
+          exit $RC
+      - name: Chrome log tail on failure
+        if: failure()
+        run: |
+          echo "=== headless chrome ==="; tail -40 /tmp/chrome.log || true
+          echo "=== headful (Xvfb) chrome ==="; tail -40 /tmp/chrome-xvfb.log || true
+          echo "=== Xvfb ==="; tail -20 /tmp/xvfb.log || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-runner-frames
+          path: artifacts/runner/
+          if-no-files-found: ignore
+
+  fresh-ubuntu:
+    name: Provision pristine Ubuntu 22.04
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare container (non-root sudo user with password)
+        run: |
+          set +e
+          docker pull ubuntu:22.04
+          docker run -d --name orbit-node --network host --shm-size=1g ubuntu:22.04 sleep infinity
+          docker exec orbit-node bash -cex '
+            export DEBIAN_FRONTEND=noninteractive
+            OPTS="-o Acquire::Retries=5 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
+            ok=
+            for i in 1 2 3; do
+              apt-get $OPTS update && { ok=1; break; }
+              echo "apt update attempt $i failed; retrying in 10s"; sleep 10
+            done
+            [ -n "$ok" ]
+            apt-get $OPTS install -y --no-install-recommends sudo curl ca-certificates
+            command -v sudo
+            useradd -m -s /bin/bash -G sudo ubuntu
+            echo "ubuntu:testpass123" | chpasswd
+          ' > /tmp/prep.log 2>&1
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            tail -30 /tmp/prep.log | tr '\n' '~' | xargs -I{} echo "::error::PREP: {}"
+            exit $rc
+          fi
+      - name: Copy provisioner + probe into container
+        run: |
+          docker cp .github/e2e/provision.sh orbit-node:/home/ubuntu/provision.sh
+          docker cp .github/e2e/cloud_e2e.py orbit-node:/home/ubuntu/cloud_e2e.py
+          docker exec orbit-node chown ubuntu:ubuntu /home/ubuntu/cloud_e2e.py /home/ubuntu/provision.sh
+      - name: Provision (first run installs Chrome)
+        timeout-minutes: 16
+        run: |
+          set +e
+          # 12-minute hard ceiling INSIDE the shell: a hung stage then fails
+          # this step and prints its tail instead of cancelling the whole job
+          # at 30 minutes with no diagnostics.
+          docker exec --user ubuntu -w /home/ubuntu orbit-node bash -lc \
+            'timeout 720 bash provision.sh testpass123' 2>&1 | tee /tmp/prov1.out
+          RC=${PIPESTATUS[0]}
+          if [ $RC -eq 124 ]; then echo "::error::provision hung past 720s"; fi
+          grep '^\[provision\]' /tmp/prov1.out | tr '\n' '~' | xargs -I{} echo "::notice::PROV1: {}"
+          if [ $RC -ne 0 ]; then
+            echo "::error::first provision failed (rc=$RC)"
+            echo "::notice::provision output tail:"
+            tail -60 /tmp/prov1.out | while IFS= read -r l; do echo "::notice::$l"; done
+            echo "::notice::chrome log tail:"
+            docker exec orbit-node tail -60 /tmp/orbit-chrome.log 2>/dev/null | while IFS= read -r l; do echo "::notice::$l"; done
+            exit $RC
+          fi
+      - name: Provision (second run is idempotent)
+        run: |
+          set +e
+          docker exec --user ubuntu -w /home/ubuntu orbit-node bash -lc \
+            'timeout 120 bash provision.sh testpass123' 2>&1 | tee /tmp/prov2.out
+          RC=${PIPESTATUS[0]}
+          grep '^\[provision\]' /tmp/prov2.out | tr '\n' '~' | xargs -I{} echo "::notice::PROV2: {}"
+          exit $RC
+      - name: Install probe deps in container
+        run: |
+          docker exec orbit-node bash -c '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get install -y -qq python3-pip python3-socks >/dev/null
+            pip3 install --quiet websocket-client || pip3 install --quiet --break-system-packages websocket-client
+          '
+      - name: Run CDP probe through provisioned Chrome
+        run: |
+          set +e
+          docker exec --user ubuntu -w /home/ubuntu orbit-node \
+            python3 cloud_e2e.py --base http://127.0.0.1:9222 \
+            --out /home/ubuntu/artifacts --site "https://www.example.com/" \
+            2>&1 | tee /tmp/probe.out
+          RC=${PIPESTATUS[0]}
+          grep -E '^\[FAIL\]' /tmp/probe.out | while IFS= read -r line; do echo "::error::$line"; done
+          grep -E '^\[PASS\]' /tmp/probe.out | tr '\n' '|' | xargs -I{} echo "::notice::PASSES: {}"
+          if [ $RC -ne 0 ]; then
+            tail -30 /tmp/probe.out | tr '\n' '~' | xargs -I{} echo "::notice::TAIL: {}"
+          fi
+          exit $RC
+      - name: Pull artifacts + logs
+        if: always()
+        run: |
+          mkdir -p artifacts/ubuntu
+          docker cp orbit-node:/home/ubuntu/artifacts/. artifacts/ubuntu/ || true
+          docker exec orbit-node tail -80 /tmp/orbit-chrome.log > artifacts/ubuntu/chrome.log || true
+          docker cp orbit-node:/tmp/orbit-chrome.log artifacts/ubuntu/chrome-full.log || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-ubuntu-frames
+          path: artifacts/ubuntu/
+          if-no-files-found: ignore
+
+  live-vps:
+    name: Live VPS via SSH tunnel
+    # Runs on manual dispatch (per-run inputs, never committed) and on push
+    # once repository secrets VPS_HOST/VPS_USER/VPS_PASSWORD are configured.
+    # Gating by secret presence happens at STEP level (the secrets context is
+    # not trustworthy inside a job-level if), via the first guard step.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    env:
+      VPS_HOST: ${{ github.event.inputs.vps_host || secrets.VPS_HOST }}
+      VPS_USER: ${{ github.event.inputs.vps_user || secrets.VPS_USER || 'ubuntu' }}
+      VPS_PASSWORD: ${{ github.event.inputs.vps_password || secrets.VPS_PASSWORD }}
+      REAL_SITE: ${{ github.event.inputs.real_site || secrets.REAL_SITE || 'https://www.example.com/' }}
+    outputs:
+      enabled: ${{ steps.gate.outputs.enabled }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Gate (skip when no VPS credentials supplied)
+        id: gate
+        run: |
+          if [ -z "$VPS_HOST" ] || [ -z "$VPS_PASSWORD" ]; then
+            echo "No VPS credentials (inputs or VPS_HOST/VPS_PASSWORD secrets) — skipping live-VPS job."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Mask password
+        if: steps.gate.outputs.enabled == 'true'
+        run: echo "::add-mask::$VPS_PASSWORD"
+      - name: Python + sshpass
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          python3 -m pip install --quiet websocket-client
+          sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+      - name: Provision over SSH
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          SSHPASS: $VPS_PASSWORD
+        run: |
+          set -euo pipefail
+          sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=20 "$VPS_USER@$VPS_HOST" \
+            'bash -s' -- "$VPS_PASSWORD" < .github/e2e/provision.sh
+      - name: Open tunnel and probe
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          SSHPASS: $VPS_PASSWORD
+        run: |
+          set -euo pipefail
+          sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=15 -N -L 9222:127.0.0.1:9222 \
+            "$VPS_USER@$VPS_HOST" &
+          TUN=$!
+          trap 'kill $TUN 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:9222/json/version && break || sleep 1
+          done
+          mkdir -p artifacts/vps
+          python3 .github/e2e/cloud_e2e.py --base http://127.0.0.1:9222 \
+            --out artifacts/vps --site "$REAL_SITE"
+      - uses: actions/upload-artifact@v4
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: e2e-vps-frames
+          path: artifacts/vps/
+          if-no-files-found: ignore
