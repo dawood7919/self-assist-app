@@ -7,6 +7,16 @@ PASS="${1:-}"
 log() { echo "[provision] $*"; }
 
 # --- sudo helper -----------------------------------------------------------
+if ! command -v sudo >/dev/null 2>&1; then
+  if [ "$(id -u)" -eq 0 ]; then
+    # Root image without sudo: emulate sudo as a plain exec.
+    sudo() { "$@"; }
+    log "sudo absent; running as root"
+  else
+    log "FATAL: sudo is not installed and we are not root; cannot provision"
+    exit 1
+  fi
+fi
 if sudo -n true 2>/dev/null; then
   SUDO="sudo -n"
   log "passwordless sudo available"

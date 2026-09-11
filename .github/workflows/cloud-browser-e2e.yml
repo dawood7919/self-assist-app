@@ -97,10 +97,11 @@ jobs:
         run: |
           docker pull ubuntu:22.04
           docker run -d --name orbit-node --shm-size=1g ubuntu:22.04 sleep infinity
-          docker exec orbit-node bash -c '
+          docker exec orbit-node bash -cex '
             export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq sudo curl ca-certificates >/dev/null
+            apt-get update
+            apt-get install -y sudo curl ca-certificates
+            command -v sudo
             useradd -m -s /bin/bash -G sudo ubuntu
             echo "ubuntu:testpass123" | chpasswd
           '
