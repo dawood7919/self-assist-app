@@ -443,7 +443,15 @@ def main():
     title_after = page.eval("document.title")
     step("reload", bool(title_after), f"title={title_after}")
 
-    # 12. frame cadence under interaction (scroll for 3s) ---------------
+    # 12. frame cadence under interaction (scroll a TALL page for 3s) -----
+    # example.com has no scrollable overflow, so wheel events produce no
+    # damage and no frames; navigate to a tall page instead.
+    page.send("Page.navigate", {"url":
+        "data:text/html,<body style='margin:0'>"
+        "<div style='height:6000px;background:linear-gradient(#fff,#36c)'></div>"
+        "</body>"})
+    time.sleep(1.5)
+    page.wait_frame(4)
     before = len(page.frames)
     t_end = time.time() + 3.0
     y = 0

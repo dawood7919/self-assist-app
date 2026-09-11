@@ -246,6 +246,20 @@ object CdpMessages {
                 ),
         )
 
+    /**
+     * Sets the pinch-style page scale (`Emulation.setPageScaleFactor`).
+     * Verified against real headless Chrome: this is the zoom path that
+     * actually moves `visualViewport.scale` there (browser accelerators do
+     * not). Desktop pages clamp it to a 1.0 minimum, so sub-100% zoom uses
+     * CSS zoom instead.
+     */
+    fun setPageScaleFactor(id: Int, factor: Double): String =
+        envelope(
+            id = id,
+            method = "Emulation.setPageScaleFactor",
+            params = JSONObject().put("pageScaleFactor", factor),
+        )
+
     /** Reads the in-tab navigation history (`Page.getNavigationHistory`). */
     fun getNavigationHistory(id: Int): String =
         envelope(

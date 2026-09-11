@@ -72,6 +72,13 @@ class CdpMessagesInputTest {
     }
 
     @Test
+    fun pageScaleFactorUsesEmulationDomain() {
+        val p = params(CdpMessages.setPageScaleFactor(11, 1.25))
+        assertEquals(1.25, p.getDouble("pageScaleFactor"), 0.0)
+        assertTrue(CdpMessages.setPageScaleFactor(11, 1.0).contains("Emulation.setPageScaleFactor"))
+    }
+
+    @Test
     fun reloadAndStopUsePageDomain() {
         assertTrue(CdpMessages.reload(6).contains("Page.reload"))
         assertTrue(CdpMessages.stopLoading(7).contains("Page.stopLoading"))

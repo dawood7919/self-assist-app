@@ -913,8 +913,12 @@ class RealVpsApi(
             val evaluated = session.cdp.sendAndAwait(
                 CdpMessages.evaluateValue(
                     evalId,
-                    "JSON.stringify({url:location.href,title:document.title," +
-                        "zoom:(window.visualViewport?window.visualViewport.scale:1)})",
+                    // Effective zoom is the product of pinch page-scale
+                    // (>=100% range) and root CSS zoom (<100% range); the
+                    // remote zoom command switches between the two.
+                    "(function(){var css=parseFloat(getComputedStyle(document.documentElement).zoom||'1');" +
+                        "if(!isFinite(css))css=1;var vp=window.visualViewport?window.visualViewport.scale:1;" +
+                        "return JSON.stringify({url:location.href,title:document.title,zoom:vp*css});})()",
                 ),
                 evalId,
                 IO_TIMEOUT_MS,
@@ -1177,46 +1181,8 @@ class RealVpsApi(
                 session.zoomPct = next
                 next
             }
-            // Chrome's zoom hotkeys: Ctrl+= / Ctrl+- (one notch each). This
-            // is the sequence the real-Chrome e2e probe validates; the exact
-            // percentage is later corrected from visualViewport.scale.
-            val cdp = session.cdp
-            val count = if (steps > 0) steps else -steps
-            val zoomIn = steps > 0
-            val keyCode = if (zoomIn) 187 else 189
-            val key = if (zoomIn) "=" else "-"
-            val code = if (zoomIn) "Equal" else "Minus"
-            cdp.enqueue(
-                CdpMessages.keyDown(
-                    CdpMessages.nextId(), 17, "Control", "ControlLeft",
-                    modifiers = CdpMessages.MOD_CTRL,
-                ),
-            )
-            repeat(count) {
-                cdp.enqueue(
-                    CdpMessages.keyDown(
-                        CdpMessages.nextId(), keyCode, key, code,
-                        modifiers = CdpMessages.MOD_CTRL,
-                    ),
-                )
-                cdp.enqueue(
-                    CdpMessages.keyUp(
-                        CdpMessages.nextId(), keyCode, key, code,
-                        modifiers = CdpMessages.MOD_CTRL,
-                    ),
-                )
-            }
-            val upId = CdpMessages.nextId()
-            val released = cdp.sendAndAwait(
-                CdpMessages.keyUp(upId, 17, "Control", "ControlLeft"),
-                upId,
-                IO_TIMEOUT_MS,
-            )
-            if (released.isFailure) {
-                return@safeCall Result.failure(
-                    released.exceptionOrNull() ?: Exception("Could not change zoom"),
-                )
-            }
+            applyZoom(session, newZoom)
+                .getOrElse { return@safeCall Result.failure(it) }
             touchLive(sessionId)
             Result.success(newZoom)
         }
@@ -1226,40 +1192,49 @@ class RealVpsApi(
             rejectOnMain<Int>()?.let { return@safeCall it }
             val session = liveOf(sessionId)
                 ?: return@safeCall Result.failure(unknownSession(sessionId))
-            // Ctrl+0 returns zoom to 100% in Chrome.
-            session.cdp.enqueue(
-                CdpMessages.keyDown(
-                    CdpMessages.nextId(), 17, "Control", "ControlLeft",
-                    modifiers = CdpMessages.MOD_CTRL,
-                ),
-            )
-            val up0 = CdpMessages.nextId()
-            // Digit0 shortcut is dispatched as a raw (non-text) key.
-            session.cdp.enqueue(
-                CdpMessages.keyDown(
-                    up0, 48, "0", "Digit0",
-                    modifiers = CdpMessages.MOD_CTRL,
-                    eventType = "rawKeyDown",
-                ),
-            )
-            session.cdp.enqueue(
-                CdpMessages.keyUp(
-                    CdpMessages.nextId(), 48, "0", "Digit0",
-                    modifiers = CdpMessages.MOD_CTRL,
-                ),
-            )
-            val upCtrl = CdpMessages.nextId()
-            val done = session.cdp.sendAndAwait(
-                CdpMessages.keyUp(upCtrl, 17, "Control", "ControlLeft"),
-                upCtrl,
-                IO_TIMEOUT_MS,
-            )
-            if (done.isFailure) {
-                return@safeCall Result.failure(done.exceptionOrNull() ?: Exception("Could not reset zoom"))
-            }
+            applyZoom(session, 100).getOrElse { return@safeCall Result.failure(it) }
             synchronized(lock) { session.zoomPct = 100 }
             Result.success(100)
         }
+
+    /**
+     * Applies an absolute zoom percentage using the two mechanisms verified
+     * against REAL headless Chrome by the e2e probe:
+     *  - 100%..500%: `Emulation.setPageScaleFactor` (pinch page scale). It
+     *    moves visualViewport.scale and renders in screencast frames, but
+     *    desktop pages clamp it to a 1.0 minimum.
+     *  - 25%..99%: root element CSS `zoom`, which headless Chrome honours
+     *    across the full sub-100 range.
+     * The unused mechanism is reset to identity so the two never multiply.
+     */
+    private fun applyZoom(session: LiveSession, zoomPct: Int): Result<Unit> {
+        val cdp = session.cdp
+        return if (zoomPct >= 100) {
+            val clearId = CdpMessages.nextId()
+            cdp.enqueue(CdpMessages.evaluateValue(clearId, "document.documentElement.style.zoom=''"))
+            val scaleId = CdpMessages.nextId()
+            val result = cdp.sendAndAwait(
+                CdpMessages.setPageScaleFactor(scaleId, zoomPct / 100.0),
+                scaleId,
+                IO_TIMEOUT_MS,
+            )
+            result.map { }
+        } else {
+            val scaleId = CdpMessages.nextId()
+            cdp.enqueue(CdpMessages.setPageScaleFactor(scaleId, 1.0))
+            val cssId = CdpMessages.nextId()
+            val factor = zoomPct / 100.0
+            val result = cdp.sendAndAwait(
+                CdpMessages.evaluateValue(
+                    cssId,
+                    "document.documentElement.style.zoom='$factor'",
+                ),
+                cssId,
+                IO_TIMEOUT_MS,
+            )
+            result.map { }
+        }
+    }
 
     override fun applyStream(sessionId: String, quality: Quality, frameRate: Int): Result<Unit> =
         safeCall {
