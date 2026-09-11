@@ -1,0 +1,100 @@
+name: Cloud Browser E2E probe
+
+# TEMPORARY validation workflow (manual dispatch). Validates the exact CDP
+# message sequence the app uses: target creation, window bounds, screencast
+# frame flow, mouse/keyboard input, and ZOOM semantics.
+#  - local mode (no password): runs against Chrome on the GitHub runner.
+#  - VPS mode: provisions Chrome on the given host over SSH and runs the same
+#    probe through an SSH tunnel.
+# The VPS password is supplied per-run as an input (never committed), and is
+# masked in logs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      vps_host:
+        description: "VPS host (empty = local runner Chrome only)"
+        required: false
+        default: "43.134.10.177"
+      vps_user:
+        description: "VPS username"
+        required: false
+        default: "ubuntu"
+      vps_password:
+        description: "VPS SSH password (kept out of git, masked in logs)"
+        required: false
+        default: ""
+      real_site:
+        description: "Site to load in the remote browser"
+        required: false
+        default: "https://www.example.com/"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Mask VPS password
+        run: |
+          if [ -n "${{ github.event.inputs.vps_password }}" ]; then
+            echo "::add-mask::${{ github.event.inputs.vps_password }}"
+          fi
+      - name: Check out
+        uses: actions/checkout@v4
+      - name: Prepare python deps
+        run: python3 -m pip install --quiet websocket-client requests
+      - name: Ensure local Chrome (local mode fallback / reference)
+        if: github.event.inputs.vps_password == ''
+        run: |
+          google-chrome --version || (sudo apt-get update -qq && sudo apt-get install -y -qq google-chrome-stable)
+      - name: Install ssh tooling (VPS mode)
+        if: github.event.inputs.vps_password != ''
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass openssh-client
+      - name: Probe (VPS mode)
+        if: github.event.inputs.vps_password != ''
+        env:
+          VPS_HOST: ${{ github.event.inputs.vps_host }}
+          VPS_USER: ${{ github.event.inputs.vps_user }}
+          VPS_PASSWORD: ${{ github.event.inputs.vps_password }}
+          REAL_SITE: ${{ github.event.inputs.real_site }}
+        run: |
+          set -euo pipefail
+          chmod +x .github/e2e/provision.sh
+          sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=20 "$VPS_USER@$VPS_HOST" \
+            'bash -s' -- "$VPS_PASSWORD" < .github/e2e/provision.sh
+          # Tunnel: local 9222 -> VPS loopback 9222
+          sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=15 -N -L 9222:127.0.0.1:9222 "$VPS_USER@$VPS_HOST" &
+          TUNNEL_PID=$!
+          trap 'kill $TUNNEL_PID 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:9222/json/version && break || sleep 1
+          done
+          mkdir -p artifacts
+          python3 .github/e2e/cloud_e2e.py --base http://127.0.0.1:9222 --out artifacts --site "$REAL_SITE"
+      - name: Probe (local mode)
+        if: github.event.inputs.vps_password == ''
+        env:
+          REAL_SITE: ${{ github.event.inputs.real_site }}
+        run: |
+          set -euo pipefail
+          pkill -f 'remote-debugging-port=9222' || true
+          rm -rf /tmp/orbit-e2e-profile
+          google-chrome --headless=new --remote-debugging-port=9222 \
+            --remote-debugging-address=127.0.0.1 --remote-allow-origins='*' \
+            --no-sandbox --disable-gpu --disable-dev-shm-usage \
+            --user-data-dir=/tmp/orbit-e2e-profile --window-size=1280,720 \
+            about:blank >/tmp/chrome.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:9222/json/version && break || sleep 1
+          done
+          mkdir -p artifacts
+          python3 .github/e2e/cloud_e2e.py --base http://127.0.0.1:9222 --out artifacts --site "$REAL_SITE"
+      - name: Upload probe artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-e2e-frames
+          path: artifacts/
+          if-no-files-found: ignore
