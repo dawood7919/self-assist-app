@@ -67,11 +67,14 @@ import org.json.JSONObject
  * history newest-first. Pause stops the screencast only — the remote page
  * keeps running, and resume restarts the stream.
  *
- * Frames: each live target owns a [CdpClient] whose listener queues an ack
- * for every Page.screencastFrame on a daemon thread (the standalone client
- * only offers blocking sends, which must never run on the socket reader
- * thread), decodes the JPEG payload, gates it through [thumbs], then invokes
- * [onFrame] (which must return quickly — it runs on the socket reader thread).
+ * Frames come from one of two sources selected when the target opens:
+ * a DSF-aware request/response Page.captureScreenshot pump (preferred —
+ * physical-pixel sharpness and immune to navigation freezes) on a dedicated
+ * daemon thread, or the legacy push Page.startScreencast whose listener
+ * queues an ack for every Page.screencastFrame (the standalone client only
+ * offers blocking sends, which must never run on the socket reader thread),
+ * gates it through [thumbs], then invokes [onFrame]. Either way [onFrame]
+ * must return quickly; it never blocks on I/O.
  */
 class RealVpsApi(
     appCtx: Context,
@@ -2553,7 +2556,7 @@ class RealVpsApi(
         private const val CAPTURE_TIMEOUT_MS = 9_000L
         private const val META_TIMEOUT_MS = 3_000L
         private const val META_POLL_MS = 450L
-        private const val CAPTURE_FAILURE_LIMIT = 6
+        private const val CAPTURE_FAILURE_LIMIT = 12
         private const val IDLE_INTERVAL_MS = 400L
         private const val REMOTE_DEBUG_PORT = 9222
         private const val ECHO_TOKEN = "orbit-ok"
