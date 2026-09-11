@@ -35,6 +35,7 @@ class Cdp:
         self.ws.connect(url, timeout=10)
         self.ws.settimeout(0.2)
         self._id = 0
+        self._closed = False
         self._lock = threading.Lock()
         self._cond = threading.Condition()
         self._results = {}
@@ -47,9 +48,20 @@ class Cdp:
         while True:
             try:
                 raw = self.ws.recv()
+            except websocket.WebSocketTimeoutException:
+                # recv timeout: the connection is alive, just idle. Keep
+                # reading forever so events/responses never strand a command.
+                continue
             except Exception:
+                # Wake every waiter so they fail fast instead of hanging.
+                with self._cond:
+                    self._closed = True
+                    self._cond.notify_all()
                 return
             if not raw:
+                with self._cond:
+                    self._closed = True
+                    self._cond.notify_all()
                 return
             try:
                 msg = json.loads(raw)
@@ -81,6 +93,8 @@ class Cdp:
                 return None
             deadline = time.time() + timeout
             while mid not in self._results:
+                if self._closed:
+                    raise RuntimeError(f"{self.name}: socket closed waiting for {method} (id={mid})")
                 if not self._cond.wait(timeout=max(0.01, deadline - time.time())):
                     if time.time() >= deadline:
                         raise RuntimeError(f"{self.name}: timeout waiting for {method} (id={mid})")
@@ -177,13 +191,12 @@ def main():
     browser_ws_url = version["webSocketDebuggerUrl"]
     step("version", "Browser" in version.get("Browser", ""), version.get("Browser", ""))
 
-    # 2. create target exactly like ChromiumManager (PUT then list match) -
-    enc = urllib.parse.quote(TEST_PAGE, safe="")
+    # 2. create target exactly like the app: about:blank via PUT, then
+    # Page.navigate on the target session.
     try:
-        row = http(args.base, "PUT", "/json/new?" + enc)
-    except urllib.error.HTTPError as e:
-        # some builds only allow GET
-        row = http(args.base, "GET", "/json/new?" + enc)
+        row = http(args.base, "PUT", "/json/new?about:blank")
+    except Exception:
+        row = http(args.base, "GET", "/json/new?about:blank")
     target_id = row.get("id", "")
     ws_url = row.get("webSocketDebuggerUrl", "")
     if not ws_url:
@@ -196,6 +209,11 @@ def main():
     browser = Cdp(browser_ws_url, "browser")
     page.send("Page.enable")
     page.send("Runtime.enable")
+    page.send("Page.navigate", {"url": TEST_PAGE})
+    # wait for the data page to be ready
+    t0 = time.time()
+    while time.time() - t0 < 10 and page.eval("window.__ready||0") != 1:
+        time.sleep(0.2)
 
     # 3. window bounds ----------------------------------------------------
     win = browser.send("Browser.getWindowForTarget", {"targetId": target_id})

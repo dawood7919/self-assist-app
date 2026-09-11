@@ -62,8 +62,16 @@ jobs:
       - name: Run CDP probe
         run: |
           mkdir -p artifacts/runner
+          set +e
           python3 .github/e2e/cloud_e2e.py --base http://127.0.0.1:9222 \
-            --out artifacts/runner --site "${{ github.event.inputs.real_site || 'https://www.example.com/' }}"
+            --out artifacts/runner --site "${{ github.event.inputs.real_site || 'https://www.example.com/' }}" \
+            2>&1 | tee artifacts/runner/probe.out
+          RC=${PIPESTATUS[0]}
+          grep -E '^\[(PASS|FAIL)\]' artifacts/runner/probe.out | while IFS= read -r line; do
+            echo "::notice::$line"
+          done
+          cat artifacts/runner/summary.json 2>/dev/null | while IFS= read -r line; do echo "::notice::$line"; done
+          exit $RC
       - name: Chrome log tail on failure
         if: failure()
         run: tail -60 /tmp/chrome.log
@@ -98,24 +106,41 @@ jobs:
           docker exec orbit-node chown ubuntu:ubuntu /home/ubuntu/cloud_e2e.py /home/ubuntu/provision.sh
       - name: Provision (first run installs Chrome)
         run: |
+          set +e
           docker exec --user ubuntu -w /home/ubuntu orbit-node bash -lc \
-            'bash provision.sh testpass123'
+            'bash provision.sh testpass123' 2>&1 | tee /tmp/prov1.out
+          RC=${PIPESTATUS[0]}
+          grep '^\[provision\]' /tmp/prov1.out | while IFS= read -r line; do echo "::notice::$line"; done
+          if [ $RC -ne 0 ]; then
+            echo "::error::first provision failed (rc=$RC)"
+            docker exec orbit-node tail -60 /tmp/orbit-chrome.log 2>/dev/null | while IFS= read -r l; do echo "::notice::$l"; done
+            exit $RC
+          fi
       - name: Provision (second run is idempotent)
         run: |
+          set +e
           docker exec --user ubuntu -w /home/ubuntu orbit-node bash -lc \
-            'bash provision.sh testpass123'
+            'bash provision.sh testpass123' 2>&1 | tee /tmp/prov2.out
+          RC=${PIPESTATUS[0]}
+          grep '^\[provision\]' /tmp/prov2.out | while IFS= read -r line; do echo "::notice::$line"; done
+          exit $RC
       - name: Install probe deps in container
         run: |
           docker exec orbit-node bash -c '
             export DEBIAN_FRONTEND=noninteractive
-            apt-get install -y -qq python3-pip >/dev/null
-            pip3 install --quiet --break-system-packages websocket-client
+            apt-get install -y -qq python3-pip python3-socks >/dev/null
+            pip3 install --quiet websocket-client || pip3 install --quiet --break-system-packages websocket-client
           '
       - name: Run CDP probe through provisioned Chrome
         run: |
+          set +e
           docker exec --user ubuntu -w /home/ubuntu orbit-node \
             python3 cloud_e2e.py --base http://127.0.0.1:9222 \
-            --out /home/ubuntu/artifacts --site "https://www.example.com/"
+            --out /home/ubuntu/artifacts --site "https://www.example.com/" \
+            2>&1 | tee /tmp/probe.out
+          RC=${PIPESTATUS[0]}
+          grep -E '^\[(PASS|FAIL)\]' /tmp/probe.out | while IFS= read -r line; do echo "::notice::$line"; done
+          exit $RC
       - name: Pull artifacts + logs
         if: always()
         run: |
