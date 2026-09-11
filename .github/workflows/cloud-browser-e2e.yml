@@ -95,16 +95,22 @@ jobs:
       - uses: actions/checkout@v4
       - name: Prepare container (non-root sudo user with password)
         run: |
+          set +e
           docker pull ubuntu:22.04
-          docker run -d --name orbit-node --shm-size=1g ubuntu:22.04 sleep infinity
+          docker run -d --name orbit-node --network host --shm-size=1g ubuntu:22.04 sleep infinity
           docker exec orbit-node bash -cex '
             export DEBIAN_FRONTEND=noninteractive
             apt-get update
-            apt-get install -y sudo curl ca-certificates
+            apt-get install -y --no-install-recommends sudo curl ca-certificates
             command -v sudo
             useradd -m -s /bin/bash -G sudo ubuntu
             echo "ubuntu:testpass123" | chpasswd
-          '
+          ' > /tmp/prep.log 2>&1
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            tail -30 /tmp/prep.log | tr '\n' '~' | xargs -I{} echo "::error::PREP: {}"
+            exit $rc
+          fi
       - name: Copy provisioner + probe into container
         run: |
           docker cp .github/e2e/provision.sh orbit-node:/home/ubuntu/provision.sh

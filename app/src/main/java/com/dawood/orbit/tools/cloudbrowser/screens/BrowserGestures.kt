@@ -51,7 +51,8 @@ private const val ZOOM_RATIO_PER_STEP = 1.12f
  *  - press and hold = right click
  *  - press, hold and drag = left-button drag (text selection, sliders, maps)
  *  - two-finger drag = wheel scroll
- *  - pinch open/closed = browser zoom (Ctrl+wheel on the remote)
+ *  - pinch open/closed = remote page zoom (pinch page-scale >=100%,
+ *    CSS zoom below 100% — the two mechanisms the e2e probe verified)
  *  - two-finger tap = right click
  *
  * Trackpad mode ([BrowserInteraction.Trackpad]):

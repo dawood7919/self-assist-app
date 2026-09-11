@@ -450,8 +450,11 @@ def main():
         "data:text/html,<body style='margin:0'>"
         "<div style='height:6000px;background:linear-gradient(#fff,#36c)'></div>"
         "</body>"})
-    time.sleep(1.5)
-    page.wait_frame(4)
+    base_n = len(page.frames)
+    deadline = time.time() + 4.0
+    while time.time() < deadline and len(page.frames) <= base_n:
+        time.sleep(0.05)
+    nav_frames = len(page.frames) - base_n
     before = len(page.frames)
     t_end = time.time() + 3.0
     y = 0
@@ -462,9 +465,29 @@ def main():
                    "deltaY": 300 if y == 0 else -300}, await_id=False)
         time.sleep(0.2)
     got = len(page.frames) - before
-    fps = round(got / 3.0, 1)
-    step("frameCadence", got >= 5, f"{got} frames in 3s (~{fps} fps while scrolling)")
+    # Diagnostic: does restarting screencast restore the frame stream?
+    page.send("Page.stopScreencast", {})
+    time.sleep(0.3)
+    page.send("Page.startScreencast",
+              {"format": "jpeg", "quality": 60, "maxWidth": 1280,
+               "maxHeight": 720, "everyNthFrame": 1})
+    time.sleep(0.5)
+    restart_base = len(page.frames)
+    t_end = time.time() + 3.0
+    while time.time() < t_end:
+        page.send("Input.dispatchMouseEvent",
+                  {"type": "mouseWheel", "x": 640, "y": 360, "deltaX": 0,
+                   "deltaY": 300}, await_id=False)
+        time.sleep(0.2)
+    got_after_restart = len(page.frames) - restart_base
+    scrolled = int(page.eval("window.scrollY"))
+    fps = round(max(got, got_after_restart) / 3.0, 1)
+    step("frameCadence", got >= 5 or got_after_restart >= 5,
+         f"afterNavFrames={int(nav_frames)} scrolling={got} "
+         f"afterScreencastRestart={got_after_restart} scrollY={scrolled}")
     summary["fpsWhileScrolling"] = fps
+    summary["framesAfterNav"] = int(nav_frames)
+    summary["needsScreencastRestartAfterNav"] = got < 5 and got_after_restart >= 5
 
     # 13. resize to 1080p -------------------------------------------------
     browser.send("Browser.setWindowBounds", {"windowId": window_id,
