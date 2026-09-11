@@ -235,6 +235,7 @@ fun Modifier.browserGestures(
             if (!anyPressed) return@awaitEachGesture
         }
     }
+}
 
 private fun currentSpan(
     event: androidx.compose.ui.input.pointer.PointerEvent,

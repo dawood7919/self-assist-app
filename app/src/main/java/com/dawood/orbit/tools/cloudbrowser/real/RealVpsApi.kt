@@ -104,8 +104,9 @@ class RealVpsApi(
         val browser: BrowserKind,
         val profile: String,
         val resolution: Resolution,
-        val quality: Quality,
-        val frameRate: Int,
+        // Mutable: applyStream retunes these without recreating the target.
+        var quality: Quality,
+        var frameRate: Int,
         val width: Int,
         val height: Int,
         val startedAtEpochMs: Long,
