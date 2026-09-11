@@ -336,8 +336,8 @@ private fun LiveViewport(
         // and after Mobile/Desktop switches.
         val currentDensity = LocalDensity.current.density
         LaunchedEffect(maxWidth.value, maxHeight.value, browserMode) {
-            val physW = with(LocalDensity.current) { maxWidth.toPx() }.toInt()
-            val physH = with(LocalDensity.current) { maxHeight.toPx() }.toInt()
+            val physW = (maxWidth.value * currentDensity).toInt()
+            val physH = (maxHeight.value * currentDensity).toInt()
             if (physW > 0 && physH > 0) {
                 val geo = CdpInput.emulatedViewport(physW, physH, currentDensity, browserMode)
                 actions.onViewportMeasured(geo.cssWidth, geo.cssHeight, geo.deviceScaleFactor.toFloat())
