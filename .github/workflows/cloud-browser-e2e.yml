@@ -1,27 +1,35 @@
 name: Cloud Browser E2E probe
 
-# TEMPORARY validation workflow (manual dispatch). Validates the exact CDP
-# message sequence the app uses: target creation, window bounds, screencast
-# frame flow, mouse/keyboard input, and ZOOM semantics.
-#  - local mode (no password): runs against Chrome on the GitHub runner.
-#  - VPS mode: provisions Chrome on the given host over SSH and runs the same
-#    probe through an SSH tunnel.
-# The VPS password is supplied per-run as an input (never committed), and is
-# masked in logs.
+# Validates the exact CDP message sequence the app's RealVpsApi uses against
+# REAL Chrome (not a mock): target creation, window bounds, screencast frame
+# flow, mouse / wheel / keyboard input, navigation history, and zoom semantics.
+#
+# Job "runner-chrome" runs against Chrome installed on the runner.
+# Job "fresh-ubuntu" runs provision.sh inside a pristine ubuntu:22.04
+# container as a non-root sudo user with a PASSWORD (the same situation as a
+# fresh cloud VPS), proving the in-app auto-provisioning path end to end.
+#
+# A live-VPS job is defined for manual dispatch; the SSH password is supplied
+# per-run as an input (never committed) and masked in logs.
 
 on:
+  push:
+    branches: ["arena/01a08ed6-self-assist-app"]
+    paths:
+      - ".github/e2e/**"
+      - ".github/workflows/cloud-browser-e2e.yml"
   workflow_dispatch:
     inputs:
       vps_host:
-        description: "VPS host (empty = local runner Chrome only)"
+        description: "VPS host (empty skips the live-VPS job)"
         required: false
-        default: "43.134.10.177"
+        default: ""
       vps_user:
         description: "VPS username"
         required: false
         default: "ubuntu"
       vps_password:
-        description: "VPS SSH password (kept out of git, masked in logs)"
+        description: "VPS SSH password (masked in logs, never committed)"
         required: false
         default: ""
       real_site:
@@ -30,71 +38,138 @@ on:
         default: "https://www.example.com/"
 
 jobs:
-  probe:
+  runner-chrome:
+    name: Real Chrome on runner
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
-      - name: Mask VPS password
+      - uses: actions/checkout@v4
+      - name: Python deps
+        run: python3 -m pip install --quiet websocket-client
+      - name: Start headless Chrome
         run: |
-          if [ -n "${{ github.event.inputs.vps_password }}" ]; then
-            echo "::add-mask::${{ github.event.inputs.vps_password }}"
-          fi
-      - name: Check out
-        uses: actions/checkout@v4
-      - name: Prepare python deps
-        run: python3 -m pip install --quiet websocket-client requests
-      - name: Ensure local Chrome (local mode fallback / reference)
-        if: github.event.inputs.vps_password == ''
-        run: |
-          google-chrome --version || (sudo apt-get update -qq && sudo apt-get install -y -qq google-chrome-stable)
-      - name: Install ssh tooling (VPS mode)
-        if: github.event.inputs.vps_password != ''
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass openssh-client
-      - name: Probe (VPS mode)
-        if: github.event.inputs.vps_password != ''
-        env:
-          VPS_HOST: ${{ github.event.inputs.vps_host }}
-          VPS_USER: ${{ github.event.inputs.vps_user }}
-          VPS_PASSWORD: ${{ github.event.inputs.vps_password }}
-          REAL_SITE: ${{ github.event.inputs.real_site }}
-        run: |
-          set -euo pipefail
-          chmod +x .github/e2e/provision.sh
-          sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=20 "$VPS_USER@$VPS_HOST" \
-            'bash -s' -- "$VPS_PASSWORD" < .github/e2e/provision.sh
-          # Tunnel: local 9222 -> VPS loopback 9222
-          sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -o ServerAliveInterval=15 -N -L 9222:127.0.0.1:9222 "$VPS_USER@$VPS_HOST" &
-          TUNNEL_PID=$!
-          trap 'kill $TUNNEL_PID 2>/dev/null || true' EXIT
-          for i in $(seq 1 30); do
-            curl -fsS http://127.0.0.1:9222/json/version && break || sleep 1
-          done
-          mkdir -p artifacts
-          python3 .github/e2e/cloud_e2e.py --base http://127.0.0.1:9222 --out artifacts --site "$REAL_SITE"
-      - name: Probe (local mode)
-        if: github.event.inputs.vps_password == ''
-        env:
-          REAL_SITE: ${{ github.event.inputs.real_site }}
-        run: |
-          set -euo pipefail
           pkill -f 'remote-debugging-port=9222' || true
           rm -rf /tmp/orbit-e2e-profile
+          google-chrome --version
           google-chrome --headless=new --remote-debugging-port=9222 \
             --remote-debugging-address=127.0.0.1 --remote-allow-origins='*' \
             --no-sandbox --disable-gpu --disable-dev-shm-usage \
             --user-data-dir=/tmp/orbit-e2e-profile --window-size=1280,720 \
             about:blank >/tmp/chrome.log 2>&1 &
+          for i in $(seq 1 40); do
+            curl -fsS http://127.0.0.1:9222/json/version && break || sleep 1
+          done
+      - name: Run CDP probe
+        run: |
+          mkdir -p artifacts/runner
+          python3 .github/e2e/cloud_e2e.py --base http://127.0.0.1:9222 \
+            --out artifacts/runner --site "${{ github.event.inputs.real_site || 'https://www.example.com/' }}"
+      - name: Chrome log tail on failure
+        if: failure()
+        run: tail -60 /tmp/chrome.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-runner-frames
+          path: artifacts/runner/
+          if-no-files-found: ignore
+
+  fresh-ubuntu:
+    name: Provision pristine Ubuntu 22.04
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare container (non-root sudo user with password)
+        run: |
+          docker pull ubuntu:22.04
+          docker run -d --name orbit-node --shm-size=1g ubuntu:22.04 sleep infinity
+          docker exec orbit-node bash -c '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq sudo curl ca-certificates >/dev/null
+            useradd -m -s /bin/bash -G sudo ubuntu
+            echo "ubuntu:testpass123" | chpasswd
+          '
+      - name: Copy provisioner + probe into container
+        run: |
+          docker cp .github/e2e/provision.sh orbit-node:/home/ubuntu/provision.sh
+          docker cp .github/e2e/cloud_e2e.py orbit-node:/home/ubuntu/cloud_e2e.py
+          docker exec orbit-node chown ubuntu:ubuntu /home/ubuntu/cloud_e2e.py /home/ubuntu/provision.sh
+      - name: Provision (first run installs Chrome)
+        run: |
+          docker exec --user ubuntu -w /home/ubuntu orbit-node bash -lc \
+            'bash provision.sh testpass123'
+      - name: Provision (second run is idempotent)
+        run: |
+          docker exec --user ubuntu -w /home/ubuntu orbit-node bash -lc \
+            'bash provision.sh testpass123'
+      - name: Install probe deps in container
+        run: |
+          docker exec orbit-node bash -c '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get install -y -qq python3-pip >/dev/null
+            pip3 install --quiet --break-system-packages websocket-client
+          '
+      - name: Run CDP probe through provisioned Chrome
+        run: |
+          docker exec --user ubuntu -w /home/ubuntu orbit-node \
+            python3 cloud_e2e.py --base http://127.0.0.1:9222 \
+            --out /home/ubuntu/artifacts --site "https://www.example.com/"
+      - name: Pull artifacts + logs
+        if: always()
+        run: |
+          mkdir -p artifacts/ubuntu
+          docker cp orbit-node:/home/ubuntu/artifacts/. artifacts/ubuntu/ || true
+          docker exec orbit-node tail -80 /tmp/orbit-chrome.log > artifacts/ubuntu/chrome.log || true
+          docker cp orbit-node:/tmp/orbit-chrome.log artifacts/ubuntu/chrome-full.log || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-ubuntu-frames
+          path: artifacts/ubuntu/
+          if-no-files-found: ignore
+
+  live-vps:
+    name: Live VPS via SSH tunnel
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.vps_password != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mask password
+        run: echo "::add-mask::${{ github.event.inputs.vps_password }}"
+      - name: Python + sshpass
+        run: |
+          python3 -m pip install --quiet websocket-client
+          sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+      - name: Provision over SSH
+        env:
+          SSHPASS: ${{ github.event.inputs.vps_password }}
+        run: |
+          set -euo pipefail
+          sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=20 "${{ github.event.inputs.vps_user }}@${{ github.event.inputs.vps_host }}" \
+            'bash -s' -- "${{ github.event.inputs.vps_password }}" < .github/e2e/provision.sh
+      - name: Open tunnel and probe
+        env:
+          SSHPASS: ${{ github.event.inputs.vps_password }}
+        run: |
+          set -euo pipefail
+          sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=15 -N -L 9222:127.0.0.1:9222 \
+            "${{ github.event.inputs.vps_user }}@${{ github.event.inputs.vps_host }}" &
+          TUN=$!
+          trap 'kill $TUN 2>/dev/null || true' EXIT
           for i in $(seq 1 30); do
             curl -fsS http://127.0.0.1:9222/json/version && break || sleep 1
           done
-          mkdir -p artifacts
-          python3 .github/e2e/cloud_e2e.py --base http://127.0.0.1:9222 --out artifacts --site "$REAL_SITE"
-      - name: Upload probe artifacts
+          mkdir -p artifacts/vps
+          python3 .github/e2e/cloud_e2e.py --base http://127.0.0.1:9222 \
+            --out artifacts/vps --site "${{ github.event.inputs.real_site }}"
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: cloud-e2e-frames
-          path: artifacts/
+          name: e2e-vps-frames
+          path: artifacts/vps/
           if-no-files-found: ignore
