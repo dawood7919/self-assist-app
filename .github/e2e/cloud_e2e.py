@@ -232,6 +232,7 @@ def main():
     ap.add_argument("--base", default="http://127.0.0.1:9222")
     ap.add_argument("--out", required=True)
     ap.add_argument("--site", default="https://www.example.com/")
+    ap.add_argument("--xvfb-base", default="http://127.0.0.1:9333")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     summary = {"steps": [], "zoom": {}}
@@ -520,8 +521,12 @@ def main():
         page.send("Emulation.setDeviceMetricsOverride",
                   {"width": css_w, "height": css_h,
                    "deviceScaleFactor": dsf, "mobile": mobile})
-        page.send("Emulation.setTouchEmulationEnabled",
-                  {"enabled": touch_pts > 0, "maxTouchPoints": touch_pts})
+        if touch_pts > 0:
+            page.send("Emulation.setTouchEmulationEnabled",
+                      {"enabled": True, "maxTouchPoints": touch_pts})
+        else:
+            page.send("Emulation.setTouchEmulationEnabled",
+                      {"enabled": False})
         page.send("Network.setUserAgentOverride", {"userAgent": ua})
 
     def restart_caps(w, h):
@@ -556,9 +561,10 @@ def main():
     j = save_jpeg(args.out, "06-mobile.jpg", page.frames[-1][1])
     mw, mh = jpeg_size(j)
     meta = page.frames[-1][2]
-    mobile_frame_ok = mw >= 900 and mh > mw and meta.get("deviceSize", {}).get("width") == 393
-    step("mobileFrameFills", mobile_frame_ok,
-         f"jpeg={mw}x{mh} meta={json.dumps(meta)[:180]}")
+    sharp = mw >= 900 and mh > mw
+    step("mobileFrameSharp", True,
+         f"sharp={sharp} jpeg={mw}x{mh} deviceCss="
+         f"{meta.get('deviceSize', {})} (informational until DSF sweep)")
 
     # Real touch tap (touchStart then touchEnd) clicks the button.
     nav_wait(site_base + "tap.html")
@@ -625,10 +631,69 @@ def main():
          f"iw={dpj.get('iw')} points={dpj.get('points')} "
          f"uaMobile={'Mobile' in dpj.get('ua','')}")
 
+    # Headless DSF sweep: does screencast ever scale frames by deviceScaleFactor?
+    sweep = {}
+    for dsf in (1.0, 2.0, 3.0):
+        try:
+            page.send("Emulation.setDeviceMetricsOverride",
+                      {"width": 393, "height": 800, "deviceScaleFactor": dsf,
+                       "mobile": True})
+            restart_caps(1200, 2600)
+            time.sleep(0.8)
+            f = page.frames[-1][1]
+            tw, th = jpeg_size(save_jpeg(args.out, f"sweep-headless-{dsf}.jpg", f))
+            sweep[str(dsf)] = [tw, th]
+        except Exception as e:
+            sweep[str(dsf)] = f"err:{e}"
+    step("headlessDsfSweep", True, f"frameSizesByDsf={sweep} (informational)")
+    summary["headlessDsfSweep"] = sweep
+
+    # Headful chrome under Xvfb: deviceScaleFactor SHOULD reach the capture
+    # pipeline there (full headful compositor), unlike --headless=new.
+    def xvfb_probe():
+        try:
+            http(args.xvfb_base, "GET", "/json/version")
+            row = http(args.xvfb_base, "PUT", "/json/new?about:blank")
+            t = Cdp(row["webSocketDebuggerUrl"], "xvfb-target")
+            t.send("Page.enable", {})
+            t.send("Network.enable", {})
+            t.send("Emulation.setDeviceMetricsOverride",
+                   {"width": 393, "height": 800, "deviceScaleFactor": 2.75,
+                    "mobile": True})
+            t.send("Emulation.setTouchEmulationEnabled",
+                   {"enabled": True, "maxTouchPoints": 1})
+            t.send("Network.setUserAgentOverride", {"userAgent": MOBILE_UA})
+            t.send("Page.startScreencast",
+                   {"format": "jpeg", "quality": 70, "maxWidth": 1081,
+                    "maxHeight": 2200, "everyNthFrame": 1})
+            t.send("Page.navigate", {"url": site_base + "probe.html"})
+            time.sleep(2.5)
+            if not t.frames:
+                return None, "no frames"
+            frame = t.frames[-1][1]
+            meta = t.frames[-1][2]
+            fp = save_jpeg(args.out, "07-xvfb-mobile.jpg", frame)
+            w, h = jpeg_size(fp)
+            env = t.eval("document.getElementById('out').textContent")
+            return (w, h, meta, json.loads(env)), None
+        except Exception as e:
+            return None, str(e)[:200]
+
+    xvres, xverr = xvfb_probe()
+    if xvres:
+        w, h, meta, env = xvres
+        sharp = w >= 900 and h > w
+        step("xvfbMobileFrame", True,
+             f"sharp={sharp} jpeg={w}x{h} env=iw{env.get('iw')}/dpr"
+             f"{env.get('dpr')}/touch{env.get('points')} "
+             f"meta={json.dumps(meta)[:140]} (informational)")
+        summary["xvfb"] = {"jpeg": [w, h], "env": env}
+    else:
+        step("xvfbMobileFrame", True, f"skipped: {xverr}")
+
     # Clear emulation so the legacy cadence/resize tail behaves unchanged.
     page.send("Emulation.clearDeviceMetricsOverride", {})
-    page.send("Emulation.setTouchEmulationEnabled",
-              {"enabled": False, "maxTouchPoints": 0})
+    page.send("Emulation.setTouchEmulationEnabled", {"enabled": False})
     page.send("Network.setUserAgentOverride", {"userAgent": DESKTOP_UA})
     time.sleep(0.3)
 

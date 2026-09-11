@@ -299,7 +299,9 @@ object CdpMessages {
             method = "Emulation.setTouchEmulationEnabled",
             params = JSONObject()
                 .put("enabled", enabled)
-                .put("maxTouchPoints", maxTouchPoints),
+                // Chrome rejects maxTouchPoints=0 ("must be between 1 and 16"),
+                // so never send it while disabling.
+                .apply { if (enabled) put("maxTouchPoints", maxTouchPoints.coerceIn(1, 16)) },
         )
 
     /**

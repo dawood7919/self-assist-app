@@ -59,6 +59,23 @@ jobs:
           for i in $(seq 1 40); do
             curl -fsS http://127.0.0.1:9222/json/version && break || sleep 1
           done
+      - name: Start headful Chrome under Xvfb (DSF capture diagnostics)
+        run: |
+          # Headful chrome (no --headless) under Xvfb honors deviceScaleFactor
+          # in the screencast capture pipeline; the probe samples it on :9333.
+          which Xvfb >/dev/null 2>&1 || sudo apt-get install -y --no-install-recommends xvfb
+          Xvfb :99 -screen 0 1400x2600x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
+          for i in $(seq 1 20); do [ -e /tmp/.X11-unix/X99 ] && break || sleep 1; done
+          rm -rf /tmp/orbit-e2e-profile-xvfb
+          DISPLAY=:99 google-chrome --remote-debugging-port=9333 \
+            --remote-debugging-address=127.0.0.1 --remote-allow-origins='*' \
+            --no-sandbox --disable-gpu --disable-dev-shm-usage \
+            --no-first-run --no-default-browser-check \
+            --user-data-dir=/tmp/orbit-e2e-profile-xvfb --window-size=1280,2607 \
+            about:blank >/tmp/chrome-xvfb.log 2>&1 &
+          for i in $(seq 1 40); do
+            curl -fsS http://127.0.0.1:9333/json/version && break || sleep 1
+          done
       - name: Run CDP probe
         run: |
           mkdir -p artifacts/runner
