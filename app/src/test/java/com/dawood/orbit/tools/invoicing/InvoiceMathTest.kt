@@ -79,7 +79,9 @@ class InvoiceMathTest {
             paid = 999.0,
         )
         val t = InvoiceMath.totals(document)
-        assertEquals(bd("10.00"), t.paid)
+        // Total is 10.00 + 5% VAT = 10.50; the 999 payment clamps to that.
+        assertEquals(bd("10.50"), t.total)
+        assertEquals(bd("10.50"), t.paid)
         assertEquals(bd("0.00"), t.balanceDue)
     }
 
