@@ -155,10 +155,12 @@ class InvoicesRepository private constructor(context: Context) :
         JsonFileStore(File(context.filesDir, "invoices.json"), InvoiceCodec),
     ) {
 
+    private val appContext: Context = context.applicationContext
+
     override fun idOf(item: InvoiceDocument): String = item.id
 
     fun create(kind: DocumentKind): InvoiceDocument {
-        val profile = BusinessProfileStore.get(context).profile.value
+        val profile = BusinessProfileStore.get(appContext).profile.value
         val doc = InvoiceDocument(
             number = InvoiceMath.nextNumber(items.value, kind),
             kind = kind,
