@@ -64,7 +64,17 @@ class SshManager(context: Context) {
     private val lock = ReentrantLock()
     private var session: Session? = null
     private var jsch: JSch? = null
+    private var serverId: String? = null
     private val tunnel = AtomicReference<ActiveTunnel?>(null)
+
+    /**
+     * Persists explicit user approval of the host key fingerprint for
+     * [host]:[port]. Subsequent [connect] calls then pass TOFU verification.
+     * [sha256Base64] is the standard OpenSSH SHA256:<base64> fingerprint.
+     */
+    fun trustHostKey(host: String, port: Int, sha256Base64: String) {
+        hostKeyStore.trust(host, port, sha256Base64)
+    }
 
     /**
      * Blocking: opens the control connection and authenticates.
@@ -88,6 +98,7 @@ class SshManager(context: Context) {
         lock.lock()
         try {
             dropLocked()
+            this.serverId = server.id
             val j = JSch()
             j.hostKeyRepository = TofuRepository(server.host, server.port)
             val s: Session = try {
@@ -230,6 +241,44 @@ class SshManager(context: Context) {
             }
         }
     }
+
+    /**
+     * Blocking: runs a (potentially multi-line) shell [script] as root on the
+     * remote node. When the account has passwordless sudo the script runs
+     * directly; otherwise the one-shot SSH password is fed to sudo's stdin
+     * remotely. The password never touches disk and travels only inside the
+     * encrypted SSH channel; it is quoted for the shell. Used by first-time
+     * node provisioning (installing Chrome). Call on Dispatchers.IO.
+     */
+    fun execRoot(script: String, timeoutMs: Long = 180_000L): Result<String> {
+        val id = serverId
+        val password = id?.let { EphemeralCredentials.peekPassword(it) }
+        var copy: CharArray? = null
+        try {
+            copy = password
+            val remote = buildString {
+                append("export DEBIAN_FRONTEND=noninteractive; ")
+                append("if sudo -n true 2>/dev/null; then ")
+                append("asroot() { sudo -n \"$@\"; }; ")
+                append("else ")
+                if (copy != null) {
+                    append("ORBIT_SUDO_PW=")
+                    append(shellSingleQuote(copy.concatToString()))
+                    append("; ")
+                }
+                append("asroot() { printf '%s\\n' \"$ORBIT_SUDO_PW\" | sudo -S -p '' \"$@\"; }; ")
+                append("fi; ")
+                append(script)
+            }
+            return exec(remote, timeoutMs)
+        } finally {
+            copy?.fill('\u0000')
+        }
+    }
+
+    /** Wraps [value] in single quotes safe for a POSIX shell. */
+    private fun shellSingleQuote(value: String): String =
+        "'" + value.replace("'", "'\"'\"'") + "'"
 
     /**
      * Blocking: opens an SFTP channel on the current connection.
@@ -392,7 +441,7 @@ class SshManager(context: Context) {
         }
         var passphrase: CharArray? = null
         try {
-            passphrase = EphemeralCredentials.consumePassword(server.id)
+            passphrase = EphemeralCredentials.peekPassword(server.id)
             try {
                 if (passphrase == null || passphrase.isEmpty()) {
                     jsch.addIdentity(keyPath)
@@ -414,7 +463,7 @@ class SshManager(context: Context) {
     private fun preparePasswordAuth(s: Session, server: SavedServer): Result<Unit> {
         var password: CharArray? = null
         try {
-            password = EphemeralCredentials.consumePassword(server.id)
+            password = EphemeralCredentials.peekPassword(server.id)
             if (password == null) {
                 return Result.failure(
                     Exception(

@@ -164,8 +164,12 @@ object CloudBrowserEngine {
         }
     }
 
-    /** Clamps browser zoom to the 75..150 % range the streamer supports. */
-    fun clampZoom(zoomPct: Int): Int = zoomPct.coerceIn(75, 150)
+    /**
+     * Clamps browser zoom to the range Chrome itself supports (25..500 %).
+     * The limit is owned by [CdpInput] (the pure CDP translation layer) so
+     * the engine, UI and tests share one number.
+     */
+    fun clampZoom(zoomPct: Int): Int = CdpInput.clampBrowserZoom(zoomPct)
 
     // ------------------------------------------------------------------
     // Lists

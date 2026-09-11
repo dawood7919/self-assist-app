@@ -10,9 +10,13 @@ package com.dawood.orbit.tools.cloudbrowser.real
  * Ownership rules:
  * - [setPassword] copies the caller's array, so the caller may zero its own
  *   copy immediately after calling.
+ * - [peekPassword] returns a USABLE copy without dropping the entry, because
+ *   the same secret is needed first for SSH authentication and again if the
+ *   node needs first-time provisioning (sudo installs Chrome on the VPS). The
+ *   secret still never touches disk or logs; [clear]/[clearAll] on
+ *   disconnect zeroes the stored array.
  * - [consumePassword] removes the entry, zeroes the stored array, and returns
- *   a copy for the caller to use. The caller must zero the returned copy
- *   (fill with '\u0000') once authentication has been attempted.
+ *   a copy for a caller that takes ownership.
  * - [clear] and [clearAll] overwrite stored arrays with '\u0000' before
  *   dropping them.
  */
@@ -38,6 +42,19 @@ object EphemeralCredentials {
      * a usable copy, or null when nothing was stored. The caller owns the
      * returned array and must zero it after use.
      */
+    /**
+     * Returns a usable copy WITHOUT dropping the entry, or null when nothing
+     * is stored. Needed because one secret serves two consumers during a
+     * first-time connection: SSH auth and password-protected sudo while the
+     * VPS is provisioned. The caller must zero the returned copy after use;
+     * the stored copy is wiped on [clear]/[clearAll] (called at disconnect).
+     */
+    fun peekPassword(serverId: String): CharArray? {
+        synchronized(lock) {
+            return passwords[serverId]?.copyOf()
+        }
+    }
+
     fun consumePassword(serverId: String): CharArray? {
         synchronized(lock) {
             val stored = passwords.remove(serverId) ?: return null

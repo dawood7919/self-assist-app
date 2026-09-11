@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -88,12 +89,13 @@ internal fun CloudSmall(
     text: String,
     modifier: Modifier = Modifier,
     align: TextAlign? = null,
+    color: Color = CloudColors.Dim,
 ) {
     BasicText(
         text = text,
         modifier = modifier,
         style = TextStyle(
-            color = CloudColors.Dim,
+            color = color,
             fontSize = CloudColors.SmallSize,
         ).withAlign(align),
     )

@@ -37,25 +37,43 @@ class ChromiumManager(
 ) {
 
     /**
-     * Blocking: ensures the per-user `orbit-chrome` service is active.
-     * Must be called on a background thread. First tries
-     * `systemctl --user is-active orbit-chrome || systemctl --user start
-     * orbit-chrome`; when systemd cannot start it, falls back to a direct
-     * headless launch with the same flags the service uses (loopback
-     * DevTools on port 9222, `~/.config/orbit-chrome` profile).
+     * Blocking: resizes the browser window hosting [targetId] to exactly
+     * [w] x [h] CSS pixels (so the 720p/1080p/1440p presets are real, not
+     * just screencast scaling). Must be called on a background thread. Uses
+     * the browser-level WebSocket (`Browser.getWindowForTarget` +
+     * `Browser.setWindowBounds`).
      */
-    fun ensureRunning(): Result<Unit> {
-        val probe = ssh.exec(SYSTEMD_PROBE_CMD, PROBE_TIMEOUT_MS)
-        if (probe.isSuccess) return Result.success(Unit)
-        val fallback = ssh.exec(FALLBACK_CMD, FALLBACK_TIMEOUT_MS)
-        if (fallback.isSuccess) return Result.success(Unit)
-        return Result.failure(
-            Exception(
-                "Headless Chrome is not running and could not be started. " +
-                    "Probe: ${probe.exceptionOrNull()?.message} " +
-                    "Fallback: ${fallback.exceptionOrNull()?.message}",
-            ),
-        )
+    fun resizeWindow(localPort: Int, targetId: String, w: Int, h: Int): Result<Unit> {
+        val browser = browserWsUrl(localPort)
+        if (browser.isFailure) {
+            // Non-fatal: creation already works at the service default size;
+            // a failed resize must not abort the session launch.
+            return Result.success(Unit)
+        }
+        val client = try {
+            cdpFactory(browser.getOrThrow())
+        } catch (e: Exception) {
+            return Result.success(Unit)
+        }
+        try {
+            val connected = client.connectBlocking(browser.getOrThrow(), WS_TIMEOUT_MS)
+            if (connected.isFailure) return Result.success(Unit)
+            val getId = CdpMessages.nextId()
+            val got = client.sendAndAwait(CdpMessages.getWindowForTarget(getId, targetId), getId, WS_TIMEOUT_MS)
+            if (got.isFailure) return Result.success(Unit)
+            val windowId = got.getOrNull()?.optInt("windowId", -1)?.takeIf { it != null && it >= 0 }
+                ?: return Result.success(Unit)
+            val setId = CdpMessages.nextId()
+            client.sendAndAwait(CdpMessages.setWindowBounds(setId, windowId, w, h), setId, WS_TIMEOUT_MS)
+            return Result.success(Unit)
+        } catch (e: Exception) {
+            return Result.success(Unit)
+        } finally {
+            try {
+                client.close()
+            } catch (_: Exception) {
+            }
+        }
     }
 
     /**
@@ -368,16 +386,6 @@ class ChromiumManager(
     }
 
     private companion object {
-        const val SYSTEMD_PROBE_CMD =
-            "systemctl --user is-active orbit-chrome || systemctl --user start orbit-chrome"
-        const val FALLBACK_CMD =
-            "nohup /usr/bin/google-chrome --headless=new --remote-debugging-port=9222 " +
-                "--remote-debugging-address=127.0.0.1 --no-sandbox --disable-gpu " +
-                "--disable-dev-shm-usage --user-data-dir=~/.config/orbit-chrome " +
-                "--window-size=1280,720 --no-first-run --no-default-browser-check " +
-                "about:blank >/dev/null 2>&1 & echo started"
-        const val PROBE_TIMEOUT_MS = 10_000L
-        const val FALLBACK_TIMEOUT_MS = 15_000L
         const val HTTP_TIMEOUT_MS = 5_000
         const val WS_TIMEOUT_MS = 10_000L
         const val MAX_BODY_CHARS = 512_000

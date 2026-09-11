@@ -166,6 +166,23 @@ class CdpClient(private val okHttp: OkHttpClient) {
         }
     }
 
+    /**
+     * Fire-and-forget send. OkHttp enqueues the message and preserves send
+     * ordering, so a burst of mouse/key/ack messages reaches the browser in
+     * the same order even when many are queued from different threads. Used
+     * on the hot input path: waiting for a response per mouse event over an
+     * SSH tunnel would add a round trip to every pixel of movement.
+     * Returns false when not connected or the queue rejects; never throws.
+     */
+    fun enqueue(json: String): Boolean {
+        val ws = socket ?: return false
+        return try {
+            ws.send(json)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     /** Closes the socket and fails all pending waits. Never throws. */
     fun close() {
         val ws = socket

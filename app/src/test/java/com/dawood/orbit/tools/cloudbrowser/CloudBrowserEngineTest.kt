@@ -116,11 +116,11 @@ class CloudBrowserEngineTest {
 
     @Test
     fun clampZoomStaysInRange() {
-        assertEquals(75, CloudBrowserEngine.clampZoom(10))
-        assertEquals(75, CloudBrowserEngine.clampZoom(75))
+        assertEquals(25, CloudBrowserEngine.clampZoom(10))
+        assertEquals(25, CloudBrowserEngine.clampZoom(25))
         assertEquals(100, CloudBrowserEngine.clampZoom(100))
-        assertEquals(150, CloudBrowserEngine.clampZoom(150))
-        assertEquals(150, CloudBrowserEngine.clampZoom(400))
+        assertEquals(500, CloudBrowserEngine.clampZoom(500))
+        assertEquals(500, CloudBrowserEngine.clampZoom(900))
     }
 
     @Test

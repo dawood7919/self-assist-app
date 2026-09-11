@@ -213,3 +213,58 @@ data class StreamConfig(
     val frameRate: Int = 30,
     val resolution: Resolution = Resolution.P1080,
 )
+
+/**
+ * Live state of the page shown in one remote tab: drives the address bar,
+ * the back/forward affordances and the zoom label. [zoomPct] is the browser
+ * page zoom (100 = normal).
+ */
+data class PageInfo(
+    val url: String = "",
+    val title: String = "",
+    val loading: Boolean = false,
+    val zoomPct: Int = 100,
+    val canGoBack: Boolean = false,
+    val canGoForward: Boolean = false,
+) {
+    /** True for https pages, false for http/about:blank/data URLs. */
+    val isSecure: Boolean
+        get() = url.startsWith("https://", ignoreCase = true)
+}
+
+/** One entry of the in-tab navigation history. */
+data class HistoryEntry(
+    val id: Int = -1,
+    val url: String = "",
+    val title: String = "",
+)
+
+/** Parsed `Page.getNavigationHistory` result: current index plus entries. */
+data class HistorySnapshot(
+    val currentIndex: Int = -1,
+    val entries: List<HistoryEntry> = emptyList(),
+) {
+    val canGoBack: Boolean get() = currentIndex > 0
+    val canGoForward: Boolean get() = currentIndex in 0 until entries.lastIndex
+    val currentUrl: String get() = entries.getOrNull(currentIndex)?.url ?: ""
+    val currentTitle: String get() = entries.getOrNull(currentIndex)?.title ?: ""
+}
+
+/**
+ * How finger gestures on the phone viewport map onto the remote browser.
+ *  - [Direct]: the finger IS the cursor. Tap = click at that point, long
+ *    press = right click, drag = press-and-drag, two-finger drag = wheel
+ *    scroll, pinch = browser zoom.
+ *  - [Trackpad]: a laptop-style pad. One finger moves a floating cursor,
+ *    tap clicks under the cursor, two-finger drag scrolls, pinch zooms.
+ */
+enum class BrowserInteraction { Direct, Trackpad }
+
+/** One remote pointer interaction translated from a touch gesture. */
+data class RemotePoint(
+    val fx: Float,
+    val fy: Float,
+) {
+    fun toPixels(width: Int, height: Int): Pair<Double, Double> =
+        CdpInput.pointFromFractions(fx, fy, width, height)
+}

@@ -9,6 +9,7 @@ import android.os.Looper
 import android.provider.MediaStore
 import android.util.Base64
 import com.dawood.orbit.tools.cloudbrowser.BrowserKind
+import com.dawood.orbit.tools.cloudbrowser.BrowserPageEvent
 import com.dawood.orbit.tools.cloudbrowser.BrowserSession
 import com.dawood.orbit.tools.cloudbrowser.CdpEvent
 import com.dawood.orbit.tools.cloudbrowser.CdpInput
@@ -18,8 +19,11 @@ import com.dawood.orbit.tools.cloudbrowser.DownloadState
 import com.dawood.orbit.tools.cloudbrowser.DownloadStore
 import com.dawood.orbit.tools.cloudbrowser.FileType
 import com.dawood.orbit.tools.cloudbrowser.FrameThrottle
+import com.dawood.orbit.tools.cloudbrowser.HistorySnapshot
+import com.dawood.orbit.tools.cloudbrowser.PageInfo
 import com.dawood.orbit.tools.cloudbrowser.Quality
 import com.dawood.orbit.tools.cloudbrowser.RemoteFile
+import com.dawood.orbit.tools.cloudbrowser.RemoteMouseButton
 import com.dawood.orbit.tools.cloudbrowser.Resolution
 import com.dawood.orbit.tools.cloudbrowser.SavedServer
 import com.dawood.orbit.tools.cloudbrowser.SessionDetails
@@ -72,11 +76,15 @@ class RealVpsApi(
     private val chromium: ChromiumManager,
     private val okHttp: OkHttpClient,
     private val thumbs: FrameThrottle = FrameThrottle(),
-    private val onFrame: (sessionId: String, bytes: ByteArray) -> Unit = { _, _ -> },
+    private val onFrame: (sessionId: String, frame: LiveFrame) -> Unit = { _, _ -> },
+    private val onPageEvent: (sessionId: String, event: BrowserPageEvent) -> Unit = { _, _ -> },
 ) : VpsApi {
 
     private val appContext: Context = appCtx.applicationContext
+    private val provisioner = ChromeProvisioner(ssh)
     private val lock = Any()
+    @Volatile
+    private var browserPrepared: Boolean = false
     private val live = LinkedHashMap<String, LiveSession>()
     private val tombstones = LinkedHashMap<String, BrowserSession>()
     private val lastDetails = mutableMapOf<String, SessionDetails>()
@@ -105,6 +113,8 @@ class RealVpsApi(
         var screencasting: Boolean,
         var cursorX: Float,
         var cursorY: Float,
+        var zoomPct: Int = 100,
+        var buttonsMask: Int = 0,
     ) {
         fun toRecord(): BrowserSession =
             BrowserSession(
@@ -200,8 +210,36 @@ class RealVpsApi(
                     connected.exceptionOrNull() ?: Exception("Could not connect to the server."),
                 )
             }
-            synchronized(lock) { currentServerId = server.id }
+            synchronized(lock) {
+                currentServerId = server.id
+                browserPrepared = false
+            }
             Result.success(Unit)
+        }
+
+    /**
+     * Persists a user-approved TOFU host key. Exposed outside [VpsApi] because
+     * trusting a host is an SSH-transport concern, not a browsing verb.
+     */
+    fun trustHostKey(host: String, port: Int, sha256Base64: String) {
+        ssh.trustHostKey(host, port, sha256Base64)
+    }
+
+    /**
+     * Ensures headless Chrome is installed and listening on the node. Runs
+     * the (idempotent) provisioner once per connection and caches success,
+     * while disconnect/[connect] resets the flag.
+     */
+    override fun prepareBrowser(onStage: (String) -> Unit): Result<Unit> =
+        safeCall {
+            rejectOnMain<Unit>()?.let { return@safeCall it }
+            val already = synchronized(lock) { browserPrepared }
+            if (already) return@safeCall Result.success(Unit)
+            val result = provisioner.ensure(onStage)
+            if (result.isSuccess) {
+                synchronized(lock) { browserPrepared = true }
+            }
+            result
         }
 
     /**
@@ -223,6 +261,7 @@ class RealVpsApi(
                 live.clear()
                 prevCpu = null
                 prevNet = null
+                browserPrepared = false
             }
             for (session in closing) {
                 try {
@@ -288,6 +327,12 @@ class RealVpsApi(
             }
             if (!ssh.isConnected()) {
                 return@safeCall Result.failure(Exception("Not connected — call connect() first."))
+            }
+            val provisioned = prepareBrowser { }
+            if (provisioned.isFailure) {
+                return@safeCall Result.failure(
+                    provisioned.exceptionOrNull() ?: Exception("Chrome could not be prepared on the server."),
+                )
             }
             val sessionId = UUID.randomUUID().toString()
             val deadline = System.currentTimeMillis() +
@@ -796,142 +841,504 @@ class RealVpsApi(
         }
 
     // ------------------------------------------------------------------
-    // Remote input (extra beyond VpsApi; the tool calls these directly)
+    // Browsing: navigation, history, page state
     // ------------------------------------------------------------------
 
-    /**
-     * Sends one overlay key label to the session: KEY_TABLE labels go out
-     * as keyDown/keyUp, any other single character goes out as insertText.
-     * Anything else fails honestly. Blocking; call on Dispatchers.IO.
-     */
-    fun sendKey(sessionId: String, keyLabel: String): Result<Unit> =
+    override fun navigate(sessionId: String, rawInput: String): Result<PageInfo> =
         safeCall {
-            rejectOnMain<Unit>()?.let { return@safeCall it }
+            rejectOnMain<PageInfo>()?.let { return@safeCall it }
             val session = liveOf(sessionId)
                 ?: return@safeCall Result.failure(unknownSession(sessionId))
-            // Overlay aliases for the standalone KEY_TABLE names.
-            val canonical = when (keyLabel) {
-                "Esc" -> "Escape"
-                "⌫" -> "Backspace"
-                else -> keyLabel
-            }
-            val windowsCode = CdpInput.KEY_TABLE[canonical]
-            if (windowsCode != null) {
-                val downId = CdpMessages.nextId()
-                val down = session.cdp.sendAndAwait(
-                    CdpMessages.keyDown(downId, windowsCode, canonical, canonical),
-                    downId,
-                    IO_TIMEOUT_MS,
+            val url = CdpInput.normalizeAddress(rawInput)
+                ?: return@safeCall Result.failure(Exception("Enter a web address or search terms"))
+            val navId = CdpMessages.nextId()
+            val navigated = session.cdp.sendAndAwait(
+                CdpMessages.navigate(navId, url),
+                navId,
+                NAV_TIMEOUT_MS,
+            )
+            if (navigated.isFailure) {
+                return@safeCall Result.failure(
+                    navigated.exceptionOrNull() ?: Exception("Could not open $url"),
                 )
-                if (down.isFailure) {
-                    return@safeCall Result.failure(down.exceptionOrNull() ?: Exception("Could not send the key."))
-                }
-                val upId = CdpMessages.nextId()
-                val up = session.cdp.sendAndAwait(
-                    CdpMessages.keyUp(upId, windowsCode, canonical, canonical),
-                    upId,
-                    IO_TIMEOUT_MS,
-                )
-                if (up.isFailure) {
-                    return@safeCall Result.failure(up.exceptionOrNull() ?: Exception("Could not send the key."))
-                }
-                touchLive(sessionId)
-                return@safeCall Result.success(Unit)
             }
-            if (keyLabel.length == 1) {
-                val insertId = CdpMessages.nextId()
-                val inserted = session.cdp.sendAndAwait(CdpMessages.insertText(insertId, keyLabel), insertId, IO_TIMEOUT_MS)
-                if (inserted.isFailure) {
-                    return@safeCall Result.failure(
-                        inserted.exceptionOrNull() ?: Exception("Could not send the key."),
-                    )
-                }
-                touchLive(sessionId)
-                return@safeCall Result.success(Unit)
+            // Chrome puts DNS/TLS/connection errors in errorText rather than
+            // failing the command; surface them as a readable failure.
+            val errorText = navigated.getOrNull()?.optString("errorText", "").orEmpty()
+            if (errorText.isNotBlank() && errorText != "net::OK") {
+                return@safeCall Result.failure(Exception(humanizeNetError(errorText, url)))
             }
-            Result.failure(Exception("Unsupported key: $keyLabel"))
+            synchronized(lock) {
+                session.cursorX = 0.5f
+                session.cursorY = 0.5f
+            }
+            Thread.sleep(400)
+            pageInfo(sessionId)
         }
 
-    /**
-     * Moves the remote pointer by a touchpad drag. The per-session cursor
-     * is tracked in 0..1 fractions (a full-width drag crosses the screen)
-     * and mapped through pointFromFractions. Blocking; call on
-     * Dispatchers.IO.
-     */
-    fun sendPointerMove(sessionId: String, dxPixels: Float, dyPixels: Float): Result<Unit> =
+    override fun reload(sessionId: String): Result<Unit> =
+        sendAwait(sessionId) { id -> CdpMessages.reload(id) }
+
+    override fun stopLoading(sessionId: String): Result<Unit> =
+        sendAwait(sessionId) { id -> CdpMessages.stopLoading(id) }
+
+    override fun goBack(sessionId: String): Result<Unit> =
+        historyMove(sessionId, "history.back()")
+
+    override fun goForward(sessionId: String): Result<Unit> =
+        historyMove(sessionId, "history.forward()")
+
+    private fun historyMove(sessionId: String, script: String): Result<Unit> =
         safeCall {
             rejectOnMain<Unit>()?.let { return@safeCall it }
             val session = liveOf(sessionId)
                 ?: return@safeCall Result.failure(unknownSession(sessionId))
-            val point: Pair<Double, Double>
-            synchronized(lock) {
-                session.cursorX = (session.cursorX + dxPixels / DRAG_FULL_WIDTH_PX).coerceIn(0f, 1f)
-                session.cursorY = (session.cursorY + dyPixels / DRAG_FULL_WIDTH_PX).coerceIn(0f, 1f)
-                point = CdpInput.pointFromFractions(session.cursorX, session.cursorY, session.width, session.height)
-            }
-            val moveId = CdpMessages.nextId()
-            val moved = session.cdp.sendAndAwait(
-                CdpMessages.mouse(moveId, "mouseMoved", point.first, point.second),
-                moveId,
-                IO_TIMEOUT_MS,
-            )
-            if (moved.isFailure) {
-                return@safeCall Result.failure(moved.exceptionOrNull() ?: Exception("Could not move the pointer."))
+            val id = CdpMessages.nextId()
+            val result = session.cdp.sendAndAwait(CdpMessages.evaluateValue(id, script), id, IO_TIMEOUT_MS)
+            if (result.isFailure) {
+                return@safeCall Result.failure(result.exceptionOrNull() ?: Exception("History move failed"))
             }
             touchLive(sessionId)
             Result.success(Unit)
         }
 
-    /**
-     * Handles overlay toolbar actions beyond Refresh/Zoom (which the tool
-     * handles locally): Back navigates the remote page back, Screenshot
-     * captures the page into Pictures. Anything else fails honestly.
-     * Blocking; call on Dispatchers.IO.
-     */
-    fun sendToolbarAction(sessionId: String, action: String): Result<Unit> =
+    override fun pageInfo(sessionId: String): Result<PageInfo> =
+        safeCall {
+            rejectOnMain<PageInfo>()?.let { return@safeCall it }
+            val session = liveOf(sessionId)
+                ?: return@safeCall Result.failure(unknownSession(sessionId))
+            val evalId = CdpMessages.nextId()
+            val evaluated = session.cdp.sendAndAwait(
+                CdpMessages.evaluateValue(
+                    evalId,
+                    "JSON.stringify({url:location.href,title:document.title," +
+                        "zoom:(window.visualViewport?window.visualViewport.scale:1)})",
+                ),
+                evalId,
+                IO_TIMEOUT_MS,
+            )
+            if (evaluated.isFailure) {
+                return@safeCall Result.failure(
+                    evaluated.exceptionOrNull() ?: Exception("Could not read the page."),
+                )
+            }
+            val parsed = CdpMessages.parsePageInfo(evaluated.getOrNull())
+                ?: return@safeCall Result.failure(Exception("The page returned no state."))
+            val historyId = CdpMessages.nextId()
+            val historyResult = session.cdp.sendAndAwait(
+                CdpMessages.getNavigationHistory(historyId),
+                historyId,
+                IO_TIMEOUT_MS,
+            )
+            val history: HistorySnapshot = if (historyResult.isSuccess) {
+                CdpMessages.parseHistory(historyResult.getOrNull())
+            } else {
+                HistorySnapshot()
+            }
+            var zoomPct = parsed.zoomPct
+            synchronized(lock) {
+                if (zoomPct in CdpInput.ZOOM_MIN_PCT..CdpInput.ZOOM_MAX_PCT) {
+                    session.zoomPct = zoomPct
+                } else {
+                    zoomPct = session.zoomPct
+                }
+            }
+            touchLive(sessionId)
+            Result.success(
+                parsed.copy(
+                    canGoBack = history.canGoBack,
+                    canGoForward = history.canGoForward,
+                    zoomPct = zoomPct,
+                ),
+            )
+        }
+
+    // ------------------------------------------------------------------
+    // Remote pointer
+    // ------------------------------------------------------------------
+
+    override fun pointerMove(sessionId: String, fx: Float, fy: Float): Result<Unit> =
+        safeCall {
+            val session = liveOf(sessionId)
+                ?: return@safeCall Result.failure(unknownSession(sessionId))
+            val point = setCursor(session, fx, fy)
+            session.cdp.enqueue(
+                CdpMessages.mouse(
+                    CdpMessages.nextId(),
+                    "mouseMoved",
+                    point.first,
+                    point.second,
+                    buttons = session.buttonsMask.takeIf { it != 0 },
+                ),
+            )
+            Result.success(Unit)
+        }
+
+    override fun pointerMoveRelative(sessionId: String, dfx: Float, dfy: Float): Result<Unit> =
+        safeCall {
+            val session = liveOf(sessionId)
+                ?: return@safeCall Result.failure(unknownSession(sessionId))
+            val next = synchronized(lock) {
+                session.cursorX = (session.cursorX + dfx).coerceIn(0f, 1f)
+                session.cursorY = (session.cursorY + dfy).coerceIn(0f, 1f)
+                session.cursorX to session.cursorY
+            }
+            pointerMove(sessionId, next.first, next.second)
+        }
+
+    override fun pointerPress(
+        sessionId: String,
+        fx: Float,
+        fy: Float,
+        button: RemoteMouseButton,
+    ): Result<Unit> =
+        safeCall {
+            val session = liveOf(sessionId)
+                ?: return@safeCall Result.failure(unknownSession(sessionId))
+            val point = setCursor(session, fx, fy)
+            synchronized(lock) { session.buttonsMask = session.buttonsMask or button.bit }
+            session.cdp.enqueue(
+                CdpMessages.mouse(
+                    CdpMessages.nextId(),
+                    "mousePressed",
+                    point.first,
+                    point.second,
+                    button = button.cdpName,
+                    buttons = session.buttonsMask,
+                    clickCount = 1,
+                ),
+            )
+            Result.success(Unit)
+        }
+
+    override fun pointerRelease(
+        sessionId: String,
+        fx: Float,
+        fy: Float,
+        button: RemoteMouseButton,
+    ): Result<Unit> =
+        safeCall {
+            val session = liveOf(sessionId)
+                ?: return@safeCall Result.failure(unknownSession(sessionId))
+            val point = setCursor(session, fx, fy)
+            synchronized(lock) { session.buttonsMask = session.buttonsMask and button.bit.inv() }
+            session.cdp.enqueue(
+                CdpMessages.mouse(
+                    CdpMessages.nextId(),
+                    "mouseReleased",
+                    point.first,
+                    point.second,
+                    button = button.cdpName,
+                    buttons = session.buttonsMask,
+                    clickCount = 1,
+                ),
+            )
+            Result.success(Unit)
+        }
+
+    override fun click(
+        sessionId: String,
+        fx: Float,
+        fy: Float,
+        button: RemoteMouseButton,
+        clickCount: Int,
+    ): Result<Unit> =
+        safeCall {
+            val session = liveOf(sessionId)
+                ?: return@safeCall Result.failure(unknownSession(sessionId))
+            val point = setCursor(session, fx, fy)
+            val cdp = session.cdp
+            // Ordered burst: move, press, release. For right/middle click the
+            // clickCount stays 1; double/triple left clicks carry the count.
+            val count = clickCount.coerceIn(1, 3)
+            cdp.enqueue(
+                CdpMessages.mouse(
+                    CdpMessages.nextId(),
+                    "mouseMoved",
+                    point.first,
+                    point.second,
+                ),
+            )
+            cdp.enqueue(
+                CdpMessages.mouse(
+                    CdpMessages.nextId(),
+                    "mousePressed",
+                    point.first,
+                    point.second,
+                    button = button.cdpName,
+                    buttons = button.bit,
+                    clickCount = count,
+                ),
+            )
+            cdp.enqueue(
+                CdpMessages.mouse(
+                    CdpMessages.nextId(),
+                    "mouseReleased",
+                    point.first,
+                    point.second,
+                    button = button.cdpName,
+                    buttons = 0,
+                    clickCount = count,
+                ),
+            )
+            touchLive(sessionId)
+            Result.success(Unit)
+        }
+
+    override fun wheel(
+        sessionId: String,
+        fx: Float,
+        fy: Float,
+        deltaXPx: Double,
+        deltaYPx: Double,
+        ctrlKey: Boolean,
+    ): Result<Unit> =
+        safeCall {
+            val session = liveOf(sessionId)
+                ?: return@safeCall Result.failure(unknownSession(sessionId))
+            val point = setCursor(session, fx, fy)
+            val cdp = session.cdp
+            cdp.enqueue(CdpMessages.mouse(CdpMessages.nextId(), "mouseMoved", point.first, point.second))
+            cdp.enqueue(
+                CdpMessages.mouse(
+                    CdpMessages.nextId(),
+                    "mouseWheel",
+                    point.first,
+                    point.second,
+                    deltaX = deltaXPx,
+                    deltaY = deltaYPx,
+                    modifiers = if (ctrlKey) CdpMessages.MOD_CTRL else null,
+                    deltaMode = 0,
+                ),
+            )
+            touchLive(sessionId)
+            Result.success(Unit)
+        }
+
+    // ------------------------------------------------------------------
+    // Keyboard and zoom
+    // ------------------------------------------------------------------
+
+    override fun typeText(sessionId: String, text: String): Result<Unit> =
+        safeCall {
+            if (text.isEmpty()) return@safeCall Result.success(Unit)
+            val session = liveOf(sessionId)
+                ?: return@safeCall Result.failure(unknownSession(sessionId))
+            // Fire-and-forget like a real keyboard: many long pages would
+            // otherwise pay a tunnel round trip per character.
+            session.cdp.enqueue(CdpMessages.insertText(CdpMessages.nextId(), text))
+            touchLive(sessionId)
+            Result.success(Unit)
+        }
+
+    override fun pressKey(sessionId: String, label: String): Result<Unit> =
         safeCall {
             rejectOnMain<Unit>()?.let { return@safeCall it }
             val session = liveOf(sessionId)
                 ?: return@safeCall Result.failure(unknownSession(sessionId))
-            when (action) {
-                "Back" -> {
-                    val backId = CdpMessages.nextId()
-                    val back = session.cdp.sendAndAwait(CdpMessages.evaluate(backId, "history.back()"), backId, IO_TIMEOUT_MS)
-                    if (back.isFailure) {
-                        return@safeCall Result.failure(back.exceptionOrNull() ?: Exception("Could not go back."))
-                    }
-                    touchLive(sessionId)
-                    Result.success(Unit)
-                }
-                "Screenshot" -> {
-                    val shotId = CdpMessages.nextId()
-                    val shot = session.cdp.sendAndAwait(CdpMessages.captureScreenshot(shotId), shotId, IO_TIMEOUT_MS)
-                    if (shot.isFailure) {
-                        return@safeCall Result.failure(
-                            shot.exceptionOrNull() ?: Exception("Could not capture the page."),
-                        )
-                    }
-                    val data = shot.getOrNull()?.optString("data", "").orEmpty()
-                    if (data.isNullOrEmpty()) {
-                        return@safeCall Result.failure(Exception("The page returned an empty screenshot."))
-                    }
-                    val bytes = try {
-                        Base64.decode(data, Base64.DEFAULT)
-                    } catch (e: Exception) {
-                        return@safeCall Result.failure(Exception("The screenshot bytes were corrupt."))
-                    }
-                    val saved = saveImageToPictures(bytes, "orbit-$sessionId.jpg")
-                    if (saved.isFailure) {
-                        return@safeCall Result.failure(
-                            saved.exceptionOrNull() ?: Exception("Could not save the screenshot."),
-                        )
-                    }
-                    touchLive(sessionId)
-                    Result.success(Unit)
-                }
-                else -> Result.failure(Exception("$action is not available on this backend"))
+            val canonical = when (label) {
+                "Esc" -> "Escape"
+                "⌫" -> "Backspace"
+                else -> label
             }
+            val code = CdpInput.KEY_TABLE[canonical]
+                ?: return@safeCall Result.failure(Exception("Unsupported key: $label"))
+            val (key, domCode) = CdpInput.domIdentity(canonical)
+            // Press+release ordered, awaited once so failures (dead target)
+            // are honest instead of disappearing into the queue.
+            val down = CdpMessages.nextId()
+            session.cdp.enqueue(CdpMessages.keyDown(down, code, key, domCode))
+            val up = CdpMessages.nextId()
+            val released = session.cdp.sendAndAwait(
+                CdpMessages.keyUp(up, code, key, domCode),
+                up,
+                IO_TIMEOUT_MS,
+            )
+            if (released.isFailure) {
+                return@safeCall Result.failure(
+                    released.exceptionOrNull() ?: Exception("Could not send the key."),
+                )
+            }
+            touchLive(sessionId)
+            Result.success(Unit)
         }
+
+    override fun zoom(sessionId: String, steps: Int, fx: Float, fy: Float): Result<Int> =
+        safeCall {
+            if (steps == 0) {
+                return@safeCall Result.success(liveOf(sessionId)?.zoomPct ?: 100)
+            }
+            val session = liveOf(sessionId)
+                ?: return@safeCall Result.failure(unknownSession(sessionId))
+            val point = setCursor(session, fx, fy)
+            val newZoom = synchronized(lock) {
+                val next = CdpInput.stepZoom(session.zoomPct, steps)
+                session.zoomPct = next
+                next
+            }
+            // Chrome zooms around the pointer for Ctrl+wheel, exactly like
+            // the desktop browser's pinch/ctrl-wheel gesture.
+            val ticks = if (steps > 0) 1..steps else (steps..-1)
+            for (i in ticks) {
+                val deltaY = if (steps > 0) -WHEEL_TICK_PX else WHEEL_TICK_PX
+                session.cdp.enqueue(
+                    CdpMessages.mouse(
+                        CdpMessages.nextId(),
+                        "mouseWheel",
+                        point.first,
+                        point.second,
+                        deltaX = 0.0,
+                        deltaY = deltaY.toDouble(),
+                        modifiers = CdpMessages.MOD_CTRL,
+                        deltaMode = 0,
+                    ),
+                )
+            }
+            touchLive(sessionId)
+            Result.success(newZoom)
+        }
+
+    override fun resetZoom(sessionId: String): Result<Int> =
+        safeCall {
+            rejectOnMain<Int>()?.let { return@safeCall it }
+            val session = liveOf(sessionId)
+                ?: return@safeCall Result.failure(unknownSession(sessionId))
+            // Ctrl+0 returns zoom to 100% in Chrome.
+            session.cdp.enqueue(
+                CdpMessages.keyDown(
+                    CdpMessages.nextId(), 17, "Control", "ControlLeft",
+                    modifiers = CdpMessages.MOD_CTRL,
+                ),
+            )
+            val up0 = CdpMessages.nextId()
+            session.cdp.enqueue(
+                CdpMessages.keyDown(
+                    up0, 48, "0", "Digit0",
+                    modifiers = CdpMessages.MOD_CTRL,
+                ),
+            )
+            session.cdp.enqueue(
+                CdpMessages.keyUp(
+                    CdpMessages.nextId(), 48, "0", "Digit0",
+                    modifiers = CdpMessages.MOD_CTRL,
+                ),
+            )
+            val upCtrl = CdpMessages.nextId()
+            val done = session.cdp.sendAndAwait(
+                CdpMessages.keyUp(upCtrl, 17, "Control", "ControlLeft"),
+                upCtrl,
+                IO_TIMEOUT_MS,
+            )
+            if (done.isFailure) {
+                return@safeCall Result.failure(done.exceptionOrNull() ?: Exception("Could not reset zoom"))
+            }
+            synchronized(lock) { session.zoomPct = 100 }
+            Result.success(100)
+        }
+
+    override fun applyStream(sessionId: String, quality: Quality, frameRate: Int): Result<Unit> =
+        safeCall {
+            rejectOnMain<Unit>()?.let { return@safeCall it }
+            val session = liveOf(sessionId)
+                ?: return@safeCall Result.failure(unknownSession(sessionId))
+            try {
+                stopScreencastBestEffort(session.cdp)
+            } catch (_: Exception) {
+            }
+            val restarted = startScreencastOn(
+                session.cdp,
+                quality,
+                frameRate,
+                session.width,
+                session.height,
+                IO_TIMEOUT_MS,
+            )
+            if (restarted.isFailure) {
+                return@safeCall Result.failure(restarted.exceptionOrNull() ?: Exception("Could not retune the stream"))
+            }
+            synchronized(lock) {
+                session.quality = quality
+                session.frameRate = frameRate
+                session.screencasting = true
+                session.state = SessionState.Active
+            }
+            Result.success(Unit)
+        }
+
+    override fun saveScreenshot(sessionId: String): Result<Unit> =
+        safeCall {
+            rejectOnMain<Unit>()?.let { return@safeCall it }
+            val session = liveOf(sessionId)
+                ?: return@safeCall Result.failure(unknownSession(sessionId))
+            val shotId = CdpMessages.nextId()
+            val shot = session.cdp.sendAndAwait(CdpMessages.captureScreenshot(shotId, 80), shotId, IO_TIMEOUT_MS)
+            if (shot.isFailure) {
+                return@safeCall Result.failure(shot.exceptionOrNull() ?: Exception("Could not capture the page."))
+            }
+            val data = shot.getOrNull()?.optString("data", "").orEmpty()
+            if (data.isEmpty()) {
+                return@safeCall Result.failure(Exception("The page returned an empty screenshot."))
+            }
+            val bytes = try {
+                Base64.decode(data, Base64.DEFAULT)
+            } catch (e: Exception) {
+                return@safeCall Result.failure(Exception("The screenshot bytes were corrupt."))
+            }
+            val saved = saveImageToPictures(bytes, "orbit-$sessionId-${System.currentTimeMillis()}.jpg")
+            if (saved.isFailure) {
+                return@safeCall Result.failure(
+                    saved.exceptionOrNull() ?: Exception("Could not save the screenshot."),
+                )
+            }
+            touchLive(sessionId)
+            Result.success(Unit)
+        }
+
+    // ------------------------------------------------------------------
+    // Input internals
+    // ------------------------------------------------------------------
+
+    /** Stores absolute fractions on the session and returns remote pixels. */
+    private fun setCursor(session: LiveSession, fx: Float, fy: Float): Pair<Double, Double> {
+        val clampedX = fx.coerceIn(0f, 1f)
+        val clampedY = fy.coerceIn(0f, 1f)
+        synchronized(lock) {
+            session.cursorX = clampedX
+            session.cursorY = clampedY
+        }
+        return CdpInput.pointFromFractions(clampedX, clampedY, session.width, session.height)
+    }
+
+    private inline fun sendAwait(
+        sessionId: String,
+        crossinline build: (Int) -> String,
+    ): Result<Unit> = safeCall {
+        rejectOnMain<Unit>()?.let { return@safeCall it }
+        val session = liveOf(sessionId)
+            ?: return@safeCall Result.failure(unknownSession(sessionId))
+        val id = CdpMessages.nextId()
+        val result = session.cdp.sendAndAwait(build(id), id, IO_TIMEOUT_MS)
+        if (result.isFailure) {
+            return@safeCall Result.failure(result.exceptionOrNull() ?: Exception("Command failed"))
+        }
+        touchLive(sessionId)
+        Result.success(Unit)
+    }
+
+    private fun humanizeNetError(errorText: String, url: String): String = when {
+        errorText.contains("NAME_NOT_RESOLVED", ignoreCase = true) ->
+            "The server name for $url could not be found"
+        errorText.contains("INTERNET_DISCONNECTED", ignoreCase = true) ||
+            errorText.contains("NETWORK_CHANGED", ignoreCase = true) ->
+            "The VPS has no internet connection right now"
+        errorText.contains("CONNECTION_REFUSED", ignoreCase = true) ->
+            "$url refused the connection"
+        errorText.contains("TIMED_OUT", ignoreCase = true) ->
+            "$url took too long to respond"
+        errorText.contains("CERT_", ignoreCase = true) ->
+            "The security certificate for $url is not trusted"
+        else -> "Could not open $url ($errorText)"
+    }
 
     // ------------------------------------------------------------------
     // Internals
@@ -944,8 +1351,10 @@ class RealVpsApi(
         frameRate: Int,
         deadline: Long,
     ): Result<OpenedTarget> {
-        val ensured = chromium.ensureRunning()
-        if (ensured.isFailure) return Result.failure(ensured.exceptionOrNull() ?: Exception("Chromium is not running."))
+        val ready = provisioner.ensure()
+        if (ready.isFailure) {
+            return Result.failure(ready.exceptionOrNull() ?: Exception("Chrome is not ready on the server."))
+        }
         val localPort = ssh.openTunnel(REMOTE_DEBUG_PORT)
             .getOrElse { return Result.failure(it) }
         val (width, height) = CdpInput.remoteSize(resolution)
@@ -963,7 +1372,10 @@ class RealVpsApi(
             cdp.close()
             return Result.failure(connected.exceptionOrNull() ?: Exception("Could not reach the new target."))
         }
-        cdp.setEventListener { event -> onScreencastEvent(sessionId, cdp, event) }
+        cdp.setEventListener { event -> onTargetEvent(sessionId, cdp, event) }
+        // Size the remote window to the requested preset before the stream
+        // starts, so frames are coded at the real viewport, not scaled.
+        chromium.resizeWindow(localPort, target.id, width, height)
         val prepared = try {
             prepareTarget(cdp, deadline)
         } catch (e: Exception) {
@@ -1043,41 +1455,58 @@ class RealVpsApi(
     }
 
     /**
-     * Frame path, on the socket reader thread: ack first so the browser
-     * keeps streaming, then decode, throttle, and deliver. Never throws and
-     * never blocks on network.
+     * All unsolicited CDP events, on the socket reader thread.
+     *
+     * Frames: ack immediately via the ordered, non-blocking [CdpClient.enqueue]
+     * (waiting for an ack reply on this same reader thread would deadlock),
+     * then decode and hand the frame to the bridge. Navigation/load events
+     * become [BrowserPageEvent]s so the UI can follow the real address bar.
+     * Never throws and never blocks on the network.
      */
-    private fun onScreencastEvent(sessionId: String, cdp: CdpClient, event: CdpEvent) {
-        val frame = event as? CdpEvent.ScreencastFrame ?: return
-        ackAsync(cdp, frame.sessionId)
-        val bytes = try {
-            Base64.decode(frame.dataB64, Base64.DEFAULT)
-        } catch (_: Exception) {
-            return
-        }
-        if (bytes.isEmpty()) return
-        if (!thumbs.shouldAccept(System.currentTimeMillis(), bytes.size)) return
-        try {
-            onFrame(sessionId, bytes)
-        } catch (_: Exception) {
+    private fun onTargetEvent(sessionId: String, cdp: CdpClient, event: CdpEvent) {
+        when (event) {
+            is CdpEvent.ScreencastFrame -> {
+                // Ack first so the browser keeps the stream going.
+                try {
+                    cdp.enqueue(CdpMessages.screencastAck(CdpMessages.nextId(), event.sessionId))
+                } catch (_: Exception) {
+                }
+                val bytes = try {
+                    Base64.decode(event.dataB64, Base64.DEFAULT)
+                } catch (_: Exception) {
+                    return
+                }
+                if (bytes.isEmpty()) return
+                if (!thumbs.shouldAccept(System.currentTimeMillis(), bytes.size)) return
+                try {
+                    onFrame(
+                        sessionId,
+                        LiveFrame(
+                            bytes = bytes,
+                            deviceWidth = event.deviceWidth,
+                            deviceHeight = event.deviceHeight,
+                            pageScaleFactor = event.pageScaleFactor,
+                            targetId = synchronized(live) { live[sessionId]?.targetId }.orEmpty(),
+                        ),
+                    )
+                } catch (_: Exception) {
+                }
+            }
+            is CdpEvent.FrameNavigated -> {
+                if (event.isMainFrame && event.url.isNotBlank()) {
+                    safeEmitPageEvent(sessionId, BrowserPageEvent.Navigated(event.url))
+                }
+            }
+            is CdpEvent.LoadStateChanged -> {
+                safeEmitPageEvent(sessionId, BrowserPageEvent.Loading(event.loading))
+            }
+            is CdpEvent.Ignored -> Unit
         }
     }
 
-    /**
-     * Fire-and-forget screencast ack on a daemon thread. The standalone
-     * CdpClient only offers blocking sendAndAwait, which must never run on
-     * the socket reader thread (the reply arrives on that same thread), so
-     * the ack goes out from a short-lived thread instead. Best effort.
-     */
-    private fun ackAsync(cdp: CdpClient, screencastSessionId: Int) {
+    private fun safeEmitPageEvent(sessionId: String, event: BrowserPageEvent) {
         try {
-            Thread {
-                try {
-                    val ackId = CdpMessages.nextId()
-                    cdp.sendAndAwait(CdpMessages.screencastAck(ackId, screencastSessionId), ackId, IO_TIMEOUT_MS)
-                } catch (_: Exception) {
-                }
-            }.apply { isDaemon = true; start() }
+            onPageEvent(sessionId, event)
         } catch (_: Exception) {
         }
     }
@@ -1373,12 +1802,13 @@ class RealVpsApi(
 
     companion object {
         private const val TEST_TIMEOUT_MS = 15_000L
-        private const val LAUNCH_TIMEOUT_MS = 30_000L
+        private const val LAUNCH_TIMEOUT_MS = 60_000L
+        private const val NAV_TIMEOUT_MS = 20_000L
         private const val IO_TIMEOUT_MS = 10_000L
         private const val REMOTE_DEBUG_PORT = 9222
         private const val ECHO_TOKEN = "orbit-ok"
         private const val ECHO_PROBE = "echo orbit-ok"
         private const val CONNECTION_LABEL = "SSH tunnel"
-        private const val DRAG_FULL_WIDTH_PX = 1200f
+        private const val WHEEL_TICK_PX = 120
     }
 }

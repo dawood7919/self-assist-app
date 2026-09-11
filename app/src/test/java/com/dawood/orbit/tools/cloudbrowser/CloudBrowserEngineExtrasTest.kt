@@ -202,9 +202,9 @@ class CloudBrowserEngineExtrasTest {
 
     @Test
     fun clampZoomBoundaryValues() {
-        assertEquals(75, CloudBrowserEngine.clampZoom(74))
-        assertEquals(75, CloudBrowserEngine.clampZoom(76 - 1))
-        assertEquals(150, CloudBrowserEngine.clampZoom(151))
-        assertEquals(149, CloudBrowserEngine.clampZoom(149))
+        assertEquals(25, CloudBrowserEngine.clampZoom(24))
+        assertEquals(25, CloudBrowserEngine.clampZoom(26 - 1))
+        assertEquals(500, CloudBrowserEngine.clampZoom(501))
+        assertEquals(499, CloudBrowserEngine.clampZoom(499))
     }
 }
