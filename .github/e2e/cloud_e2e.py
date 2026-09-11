@@ -20,12 +20,31 @@ import urllib.parse
 import urllib.error
 import sys
 import os
+import functools
+import http.server
+import socketserver
+import tempfile
 
 try:
     import websocket  # websocket-client
 except ImportError:
     print("pip install websocket-client first", file=sys.stderr)
     sys.exit(2)
+
+
+def start_local_site():
+    """Serves a tall scrollable page over HTTP (Chrome blocks top-level
+    navigation to data: URLs once an https origin has loaded)."""
+    www = tempfile.mkdtemp(prefix="orbit-e2e-")
+    with open(os.path.join(www, "tall.html"), "w", encoding="utf-8") as f:
+        f.write("<!doctype html><body style='margin:0'>"
+                "<div style='height:6000px;width:100%;"
+                "background:linear-gradient(#fff,#036)'></div></body>")
+    handler = functools.partial(
+        http.server.SimpleHTTPRequestHandler, directory=www)
+    srv = socketserver.TCPServer(("127.0.0.1", 8901), handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return "http://127.0.0.1:8901/tall.html"
 
 
 class Cdp:
@@ -446,10 +465,8 @@ def main():
     # 12. frame cadence under interaction (scroll a TALL page for 3s) -----
     # example.com has no scrollable overflow, so wheel events produce no
     # damage and no frames; navigate to a tall page instead.
-    page.send("Page.navigate", {"url":
-        "data:text/html,<body style='margin:0'>"
-        "<div style='height:6000px;background:linear-gradient(#fff,#36c)'></div>"
-        "</body>"})
+    tall_url = start_local_site()
+    page.send("Page.navigate", {"url": tall_url})
     base_n = len(page.frames)
     deadline = time.time() + 4.0
     while time.time() < deadline and len(page.frames) <= base_n:
