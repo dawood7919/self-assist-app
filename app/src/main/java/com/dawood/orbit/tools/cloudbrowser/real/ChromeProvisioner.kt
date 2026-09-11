@@ -76,8 +76,10 @@ class ChromeProvisioner(private val ssh: SshManager) {
 
     /**
      * Prints the first Chrome/Chromium binary that actually runs. Snap
-     * stubs that error without snapd are skipped, so a broken
-     * chromium-browser shim cannot win over a working binary.
+     * stubs are skipped by path, and every probe is bounded by `timeout 15`,
+     * so a snap shim that stalls trying to reach snapd can neither win nor
+     * hold the SSH channel silent until it dies (the root cause of the
+     * "Not connected" failure during first-time provisioning).
      *
      * Shell variables are written as `${'$'}name` because the script lives
      * in a Kotlin raw string, where a bare `$` would be a template.
@@ -86,7 +88,14 @@ class ChromeProvisioner(private val ssh: SshManager) {
         val script = """
             for c in google-chrome-stable google-chrome chromium chromium-browser; do
                 p=${'$'}(command -v "${'$'}c" 2>/dev/null) || continue
-                if "${'$'}p" --version >/dev/null 2>&1; then echo "${'$'}p"; exit 0; fi
+                case "${'$'}p" in /snap/*) continue ;; esac
+                if command -v timeout >/dev/null 2>&1; then
+                    timeout 15 "${'$'}p" --version >/dev/null 2>&1 || continue
+                else
+                    "${'$'}p" --version >/dev/null 2>&1 || continue
+                fi
+                echo "${'$'}p"
+                exit 0
             done
             exit 1
         """.trimIndent()

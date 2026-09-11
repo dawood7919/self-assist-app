@@ -879,7 +879,12 @@ class RealVpsApi(
         }
 
     override fun reload(sessionId: String): Result<Unit> =
-        sendAwait(sessionId) { id -> CdpMessages.reload(id) }
+        // A fresh document resets both page-scale and CSS zoom; keep the
+        // session's mirror in sync so the toolbar doesn't show a stale value
+        // until the next page-info poll.
+        sendAwait(sessionId) { id -> CdpMessages.reload(id) }.onSuccess {
+            liveOf(sessionId)?.let { synchronized(lock) { it.zoomPct = 100 } }
+        }
 
     override fun stopLoading(sessionId: String): Result<Unit> =
         sendAwait(sessionId) { id -> CdpMessages.stopLoading(id) }
@@ -900,6 +905,8 @@ class RealVpsApi(
             if (result.isFailure) {
                 return@safeCall Result.failure(result.exceptionOrNull() ?: Exception("History move failed"))
             }
+            // Cross-document history entries reset page zoom to identity.
+            synchronized(lock) { session.zoomPct = 100 }
             touchLive(sessionId)
             Result.success(Unit)
         }

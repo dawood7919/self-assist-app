@@ -176,33 +176,57 @@ jobs:
 
   live-vps:
     name: Live VPS via SSH tunnel
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.vps_password != ''
+    # Runs on manual dispatch (per-run inputs, never committed) and on push
+    # once repository secrets VPS_HOST/VPS_USER/VPS_PASSWORD are configured.
+    # Gating by secret presence happens at STEP level (the secrets context is
+    # not trustworthy inside a job-level if), via the first guard step.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    env:
+      VPS_HOST: ${{ github.event.inputs.vps_host || secrets.VPS_HOST }}
+      VPS_USER: ${{ github.event.inputs.vps_user || secrets.VPS_USER || 'ubuntu' }}
+      VPS_PASSWORD: ${{ github.event.inputs.vps_password || secrets.VPS_PASSWORD }}
+      REAL_SITE: ${{ github.event.inputs.real_site || secrets.REAL_SITE || 'https://www.example.com/' }}
+    outputs:
+      enabled: ${{ steps.gate.outputs.enabled }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Gate (skip when no VPS credentials supplied)
+        id: gate
+        run: |
+          if [ -z "$VPS_HOST" ] || [ -z "$VPS_PASSWORD" ]; then
+            echo "No VPS credentials (inputs or VPS_HOST/VPS_PASSWORD secrets) — skipping live-VPS job."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Mask password
-        run: echo "::add-mask::${{ github.event.inputs.vps_password }}"
+        if: steps.gate.outputs.enabled == 'true'
+        run: echo "::add-mask::$VPS_PASSWORD"
       - name: Python + sshpass
+        if: steps.gate.outputs.enabled == 'true'
         run: |
           python3 -m pip install --quiet websocket-client
           sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
       - name: Provision over SSH
+        if: steps.gate.outputs.enabled == 'true'
         env:
-          SSHPASS: ${{ github.event.inputs.vps_password }}
+          SSHPASS: $VPS_PASSWORD
         run: |
           set -euo pipefail
           sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=20 "${{ github.event.inputs.vps_user }}@${{ github.event.inputs.vps_host }}" \
-            'bash -s' -- "${{ github.event.inputs.vps_password }}" < .github/e2e/provision.sh
+            -o ConnectTimeout=20 "$VPS_USER@$VPS_HOST" \
+            'bash -s' -- "$VPS_PASSWORD" < .github/e2e/provision.sh
       - name: Open tunnel and probe
+        if: steps.gate.outputs.enabled == 'true'
         env:
-          SSHPASS: ${{ github.event.inputs.vps_password }}
+          SSHPASS: $VPS_PASSWORD
         run: |
           set -euo pipefail
           sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             -o ServerAliveInterval=15 -N -L 9222:127.0.0.1:9222 \
-            "${{ github.event.inputs.vps_user }}@${{ github.event.inputs.vps_host }}" &
+            "$VPS_USER@$VPS_HOST" &
           TUN=$!
           trap 'kill $TUN 2>/dev/null || true' EXIT
           for i in $(seq 1 30); do
@@ -210,9 +234,9 @@ jobs:
           done
           mkdir -p artifacts/vps
           python3 .github/e2e/cloud_e2e.py --base http://127.0.0.1:9222 \
-            --out artifacts/vps --site "${{ github.event.inputs.real_site }}"
+            --out artifacts/vps --site "$REAL_SITE"
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: steps.gate.outputs.enabled == 'true'
         with:
           name: e2e-vps-frames
           path: artifacts/vps/
