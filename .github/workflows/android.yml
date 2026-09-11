@@ -32,15 +32,57 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Compile main + unit-test sources
+        run: |
+          set +e
+          ./gradlew --no-daemon --console=plain compileDebugUnitTestKotlin \
+            > /tmp/compile.log 2>&1
+          RC=$?
+          grep -E "^e: |: error:|error: " /tmp/compile.log | head -80 | \
+            while IFS= read -r l; do echo "::error::$l"; done
+          if [ $RC -ne 0 ]; then
+            echo "::error::Unit-test compilation failed (rc=$RC)"
+            tail -80 /tmp/compile.log | while IFS= read -r l; do echo "::notice::$l"; done
+            exit 1
+          fi
+
       - name: Run unit tests
         run: ./gradlew --no-daemon testDebugUnitTest
+
+      # Log blobs are not always readable from automation; surface failures
+      # as workflow-command annotations so they appear on the check run.
+      - name: Publish unit-test failures as annotations
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, os, xml.etree.ElementTree as ET
+          files = glob.glob("app/build/test-results/testDebugUnitTest/*.xml")
+          print(f"::notice::parsed {len(files)} test result files")
+          if not files:
+              print("::error::No unit-test result XML was produced — the test task likely failed to compile.")
+          for f in files:
+              root = ET.parse(f).getroot()
+              for case in root.iter("testcase"):
+                  fail = case.find("failure") or case.find("error")
+                  if fail is not None:
+                      cls = case.get("classname", "?")
+                      name = case.get("name", "?")
+                      detail = (fail.text or "").strip().splitlines()
+                      detail = " | ".join(detail[:6])[:1200]
+                      print(f"::error file=app/src/test/{cls.replace('.', '/')}.kt::{cls}.{name} failed :: {detail}")
+              if int(root.get("failures", 0)) + int(root.get("errors", 0)) > 0:
+                  print(f"::error::{root.get('name')}: {root.get('tests')} tests, "
+                        f"{root.get('failures')} failures, {root.get('errors')} errors")
+          PY
 
       - name: Upload test report on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: unit-test-report
-          path: app/build/reports/tests/
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
           if-no-files-found: ignore
 
       - name: Assemble debug APK
