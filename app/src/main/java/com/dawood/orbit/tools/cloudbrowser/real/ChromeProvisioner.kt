@@ -8,8 +8,8 @@ package com.dawood.orbit.tools.cloudbrowser.real
  * from a background thread (Dispatchers.IO). Nothing throws: failures come
  * back as [Result.failure] with a human-readable stage message.
  *
- * The flow is the same one validated by `.github/e2e/provision.sh` against a
- * pristine Ubuntu container in CI:
+ * The flow is the same one validated by `.github/e2e/provision.sh` against
+ * a pristine Ubuntu container in CI:
  *   1. already listening on loopback 9222? done.
  *   2. a usable Chrome/Chromium binary on PATH? use it.
  *   3. otherwise install google-chrome-stable from Google's signed apt repo
@@ -24,10 +24,10 @@ class ChromeProvisioner(private val ssh: SshManager) {
 
     /** Idempotent: ensures the node can serve DevTools on loopback 9222. */
     fun ensure(onStage: (String) -> Unit = {}): Result<Unit> {
-        return runCatching {
+        return try {
             if (isDevToolsUp()) {
                 onStage("Chrome is already running on the server")
-                return@runCatching Unit
+                return Result.success(Unit)
             }
 
             var binary = detectBinary().getOrNull().orEmpty()
@@ -37,24 +37,21 @@ class ChromeProvisioner(private val ssh: SshManager) {
                 binary = detectBinary().getOrNull().orEmpty()
             }
             if (binary.isBlank()) {
-                return@runCatching Unit.let {
-                    Result.failure(
-                        Exception(
-                            "Chrome installed but could not be started. Check the server has " +
-                                "a working apt source and ~150 MB free, then reconnect.",
-                        ),
-                    )
-                }
+                return Result.failure(
+                    Exception(
+                        "Chrome installed but could not be started. Check the server has " +
+                            "a working apt source and ~150 MB free, then reconnect.",
+                    ),
+                )
             }
             onStage("Starting headless Chrome")
-            startChrome(binary)
-                .onFailure { return Result.failure(it) }
+            startChrome(binary).onFailure { return Result.failure(it) }
 
             val deadline = System.currentTimeMillis() + START_WAIT_MS
             while (System.currentTimeMillis() < deadline) {
                 if (isDevToolsUp()) {
                     onStage("Chrome is ready")
-                    return@runCatching Unit
+                    return Result.success(Unit)
                 }
                 Thread.sleep(1_000)
             }
@@ -64,7 +61,12 @@ class ChromeProvisioner(private val ssh: SshManager) {
                         "${START_WAIT_MS / 1000}s. It may still be starting on a slow server — retry.",
                 ),
             )
-        }.getOrElse { Result.failure(it as? Exception ?: Exception(it.message ?: "Provisioning failed")) }
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            Result.failure(Exception("Interrupted while preparing Chrome: ${e.message}"))
+        } catch (e: Exception) {
+            Result.failure(Exception("Chrome provisioning failed: ${e.message}"))
+        }
     }
 
     // ------------------------------------------------------------------
@@ -76,12 +78,15 @@ class ChromeProvisioner(private val ssh: SshManager) {
      * Prints the first Chrome/Chromium binary that actually runs. Snap
      * stubs that error without snapd are skipped, so a broken
      * chromium-browser shim cannot win over a working binary.
+     *
+     * Shell variables are written as `${'$'}name` because the script lives
+     * in a Kotlin raw string, where a bare `$` would be a template.
      */
     private fun detectBinary(): Result<String> {
         val script = """
             for c in google-chrome-stable google-chrome chromium chromium-browser; do
-                p=$(command -v "$c" 2>/dev/null) || continue
-                if "$p" --version >/dev/null 2>&1; then echo "$p"; exit 0; fi
+                p=${'$'}(command -v "${'$'}c" 2>/dev/null) || continue
+                if "${'$'}p" --version >/dev/null 2>&1; then echo "${'$'}p"; exit 0; fi
             done
             exit 1
         """.trimIndent()
@@ -113,13 +118,13 @@ class ChromeProvisioner(private val ssh: SshManager) {
         }
         val repo = """
             set -e
-            TMPKEY=$(mktemp)
-            wget -q -O "$TMPKEY" https://dl.google.com/linux/linux_signing_key.pub
+            TMPKEY=${'$'}(mktemp)
+            wget -q -O "${'$'}TMPKEY" https://dl.google.com/linux/linux_signing_key.pub
             install -d -m 755 /usr/share/keyrings
-            if gpg --dearmor < "$TMPKEY" > /usr/share/keyrings/google-chrome.gpg 2>/dev/null; then :; else
-                cp "$TMPKEY" /usr/share/keyrings/google-chrome.pub
+            if gpg --dearmor < "${'$'}TMPKEY" > /usr/share/keyrings/google-chrome.gpg 2>/dev/null; then :; else
+                cp "${'$'}TMPKEY" /usr/share/keyrings/google-chrome.pub
             fi
-            rm -f "$TMPKEY"
+            rm -f "${'$'}TMPKEY"
             printf '%s\n' 'deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main' \
                 > /etc/apt/sources.list.d/google-chrome.list
             apt-get update -y
@@ -147,9 +152,14 @@ class ChromeProvisioner(private val ssh: SshManager) {
         }
     }
 
+    /**
+     * [binary] is the discovered path (intentionally interpolated as a
+     * Kotlin template); every shell-only variable is escaped so it reaches
+     * bash literally.
+     */
     private fun startChrome(binary: String): Result<Unit> {
         val script = """
-            mkdir -p "$HOME/.config/orbit-chrome"
+            mkdir -p "${'$'}HOME/.config/orbit-chrome"
             pkill -f 'config/orbit-chrome' 2>/dev/null || true
             sleep 1
             nohup "$binary" \
@@ -160,7 +170,7 @@ class ChromeProvisioner(private val ssh: SshManager) {
                 --no-sandbox \
                 --disable-gpu \
                 --disable-dev-shm-usage \
-                --user-data-dir="$HOME/.config/orbit-chrome" \
+                --user-data-dir="${'$'}HOME/.config/orbit-chrome" \
                 --window-size=1280,720 \
                 --no-first-run \
                 --no-default-browser-check \

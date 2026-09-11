@@ -259,14 +259,14 @@ class SshManager(context: Context) {
             val remote = buildString {
                 append("export DEBIAN_FRONTEND=noninteractive; ")
                 append("if sudo -n true 2>/dev/null; then ")
-                append("asroot() { sudo -n \"$@\"; }; ")
+                append("asroot() { sudo -n \"\$@\"; }; ")
                 append("else ")
                 if (copy != null) {
                     append("ORBIT_SUDO_PW=")
                     append(shellSingleQuote(copy.concatToString()))
                     append("; ")
                 }
-                append("asroot() { printf '%s\\n' \"$ORBIT_SUDO_PW\" | sudo -S -p '' \"$@\"; }; ")
+                append("asroot() { printf '%s\\n' \"\$ORBIT_SUDO_PW\" | sudo -S -p '' \"\$@\"; }; ")
                 append("fi; ")
                 append(script)
             }
