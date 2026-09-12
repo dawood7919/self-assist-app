@@ -33,7 +33,7 @@ import com.dawood.orbit.tools.cloudbrowser.CloudPill
 import com.dawood.orbit.tools.cloudbrowser.CloudSmall
 import com.dawood.orbit.tools.cloudbrowser.CloudSpacing
 import com.dawood.orbit.tools.cloudbrowser.CloudTitle
-import com.dawood.orbit.tools.cloudbrowser.HistoryEntry
+import com.dawood.orbit.tools.cloudbrowser.BrowserHistoryEntry
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -46,7 +46,7 @@ import java.util.Locale
 @Composable
 fun BookmarksScreen(
     bookmarks: List<BookmarkEntry>,
-    history: List<HistoryEntry>,
+    history: List<BrowserHistoryEntry>,
     onOpen: (String) -> Unit,
     onDeleteBookmark: (String) -> Unit,
     onDeleteHistoryEntry: (String) -> Unit,

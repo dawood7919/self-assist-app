@@ -29,7 +29,7 @@ data class BookmarkEntry(
 )
 
 @Immutable
-data class HistoryEntry(
+data class BrowserHistoryEntry(
     val id: String = UUID.randomUUID().toString(),
     val url: String,
     val title: String = "",
@@ -67,8 +67,8 @@ object BookmarkCodec : JsonCodec<BookmarkEntry> {
     }
 }
 
-object HistoryCodec : JsonCodec<HistoryEntry> {
-    override fun encode(items: List<HistoryEntry>): String {
+object HistoryCodec : JsonCodec<BrowserHistoryEntry> {
+    override fun encode(items: List<BrowserHistoryEntry>): String {
         val array = JSONArray()
         items.forEach {
             array.put(
@@ -82,12 +82,12 @@ object HistoryCodec : JsonCodec<HistoryEntry> {
         return array.toString()
     }
 
-    override fun decode(text: String): List<HistoryEntry> {
+    override fun decode(text: String): List<BrowserHistoryEntry> {
         val array = JSONArray(text)
         return (0 until array.length()).mapNotNull { index ->
             runCatching {
                 val json = array.getJSONObject(index)
-                HistoryEntry(
+                BrowserHistoryEntry(
                     id = json.optString("id", UUID.randomUUID().toString()),
                     url = json.optString("url", ""),
                     title = json.optString("title", ""),
@@ -131,11 +131,11 @@ class BookmarkStore private constructor(context: Context) :
 }
 
 class HistoryStore private constructor(context: Context) :
-    EntityRepository<HistoryEntry>(
+    EntityRepository<BrowserHistoryEntry>(
         JsonFileStore(File(context.filesDir, "cloud_history.json"), HistoryCodec),
     ) {
 
-    override fun idOf(item: HistoryEntry): String = item.id
+    override fun idOf(item: BrowserHistoryEntry): String = item.id
 
     /**
      * Records a visit. Revisiting the same URL within [mergeWindowMs] moves
@@ -150,7 +150,7 @@ class HistoryStore private constructor(context: Context) :
         val updated = if (recent != null) {
             current.map { if (it.id == recent.id) it.copy(visitedAt = now, title = title.ifBlank { it.title }) else it }
         } else {
-            listOf(HistoryEntry(url = url, title = title.ifBlank { url }, visitedAt = now)) + current
+            listOf(BrowserHistoryEntry(url = url, title = title.ifBlank { url }, visitedAt = now)) + current
         }
         replaceAll(updated.sortedByDescending { it.visitedAt }.take(MAX_HISTORY))
     }
@@ -183,7 +183,7 @@ object BrowserLinks {
 
     fun displayTitle(entry: BookmarkEntry): String = entry.title.ifBlank { hostOf(entry.url).ifBlank { entry.url } }
 
-    fun displayTitle(entry: HistoryEntry): String = entry.title.ifBlank { hostOf(entry.url).ifBlank { entry.url } }
+    fun displayTitle(entry: BrowserHistoryEntry): String = entry.title.ifBlank { hostOf(entry.url).ifBlank { entry.url } }
 
     fun searchBookmarks(items: List<BookmarkEntry>, query: String): List<BookmarkEntry> {
         val q = query.trim().lowercase()
@@ -195,7 +195,7 @@ object BrowserLinks {
         }
     }
 
-    fun searchHistory(items: List<HistoryEntry>, query: String): List<HistoryEntry> {
+    fun searchHistory(items: List<BrowserHistoryEntry>, query: String): List<BrowserHistoryEntry> {
         val q = query.trim().lowercase()
         if (q.isEmpty()) return items
         return items.filter {

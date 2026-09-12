@@ -24,7 +24,7 @@ class BrowserLinksTest {
         val withTitle = BookmarkEntry(id = "1", url = "https://a.com", title = "A title")
         assertEquals("A title", BrowserLinks.displayTitle(withTitle))
 
-        val blankTitle = HistoryEntry(id = "2", url = "https://www.b.com/path", title = "")
+        val blankTitle = BrowserHistoryEntry(id = "2", url = "https://www.b.com/path", title = "")
         assertEquals("b.com", BrowserLinks.displayTitle(blankTitle))
 
         val unparsable = BookmarkEntry(id = "3", url = "about:blank", title = "")
@@ -52,8 +52,8 @@ class BrowserLinksTest {
     @Test
     fun historySearch_obeysSameRules() {
         val items = listOf(
-            HistoryEntry(id = "h1", url = "https://duckduckgo.com", title = "DuckDuckGo"),
-            HistoryEntry(id = "h2", url = "https://android.com", title = ""),
+            BrowserHistoryEntry(id = "h1", url = "https://duckduckgo.com", title = "DuckDuckGo"),
+            BrowserHistoryEntry(id = "h2", url = "https://android.com", title = ""),
         )
         assertEquals(listOf("h1"), BrowserLinks.searchHistory(items, "duck").map { it.id })
         assertEquals(listOf("h2"), BrowserLinks.searchHistory(items, "android.com").map { it.id })
@@ -77,7 +77,7 @@ class BrowserLinksTest {
     @Test
     fun historyCodec_roundTrips() {
         val original = listOf(
-            HistoryEntry(id = "h1", url = "https://visited.example/p", title = "Page", visitedAt = 99L),
+            BrowserHistoryEntry(id = "h1", url = "https://visited.example/p", title = "Page", visitedAt = 99L),
         )
         val decoded = HistoryCodec.decode(HistoryCodec.encode(original))
         assertEquals(1, decoded.size)
@@ -92,7 +92,7 @@ class BrowserLinksTest {
         // pinned even though the store itself needs a Context.
         var now = 1_000_000L
         val window = 60_000L
-        var rows = listOf(HistoryEntry(id = "h1", url = "https://x.com", title = "X", visitedAt = now))
+        var rows = listOf(BrowserHistoryEntry(id = "h1", url = "https://x.com", title = "X", visitedAt = now))
 
         // Within the window: move existing row up instead of duplicating.
         now += 5_000L
