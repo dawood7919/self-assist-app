@@ -108,17 +108,17 @@ fun InvoiceTool(
     val editor = remember(selectedId) { selected?.let { EditorState(it) } }
 
     fun persist(snapshot: InvoiceDocument) {
-        invoicesRepository.save(snapshot)
-        selectedId = snapshot.id
+        val saved = invoicesRepository.save(snapshot)
+        selectedId = saved.id
     }
 
     fun exportPdf(snapshot: InvoiceDocument) {
         exporting = true
         exportError = null
-        invoicesRepository.save(snapshot)
-        selectedId = snapshot.id
+        val saved = invoicesRepository.save(snapshot)
+        selectedId = saved.id
         scope.launch {
-            when (val result = InvoicePdf.render(context, snapshot, profile)) {
+            when (val result = InvoicePdf.render(context, saved, profile)) {
                 is InvoicePdf.Result.Success -> {
                     exportedFile = result.file
                     publishNote = null
@@ -825,7 +825,7 @@ private fun BusinessProfileSettings(
                 label = "Currency", modifier = Modifier.weight(1f))
             OrbitTextField(value = draft.taxPct.toCleanString(),
                 onValueChange = { v ->
-                    draft = draft.copy(taxPct = v.toDoubleOrNull() ?: draft.taxPct)
+                    draft = draft.copy(taxPct = v.trim().let { it.toDoubleOrNull() ?: if (it.isBlank()) 0.0 else draft.taxPct })
                 },
                 label = "Default tax %",
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),

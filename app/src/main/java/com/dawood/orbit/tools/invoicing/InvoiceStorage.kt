@@ -196,12 +196,14 @@ class InvoicesRepository private constructor(context: Context) :
         return copy
     }
 
-    fun save(doc: InvoiceDocument) = upsert(
-        doc.copy(
+    fun save(doc: InvoiceDocument): InvoiceDocument {
+        val saved = doc.copy(
             number = doc.number.ifBlank { InvoiceMath.nextNumber(items.value, doc.kind) },
             updatedAt = System.currentTimeMillis(),
-        ),
-    )
+        )
+        upsert(saved)
+        return saved
+    }
 
     companion object {
         @Volatile
